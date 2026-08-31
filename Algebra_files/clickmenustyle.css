@@ -1,0 +1,29 @@
+#opmenu {
+    overflow: auto;
+    max-height: 80vh;
+    position: fixed;
+    background:rgba(255,255,255,0.5);
+    color: black;
+    cursor: pointer;
+    border: 0px black solid
+}
+  
+#opmenu > p {
+    padding: .5rem 1rem;
+    margin: 0
+}
+#opmenu > p:nth-child(odd) {
+  background-color: rgba(128,128,0,0.5);
+}
+#opmenu > p:nth-child(even) {
+  background-color: rgba(128,0,128,0.5);
+}
+  
+#opmenu > p:hover {
+    background: black;
+    color: ghostwhite
+}
+button {
+  padding:.55rem;
+  user-select: none;
+}

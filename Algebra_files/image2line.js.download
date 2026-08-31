@@ -1,0 +1,2550 @@
+let backgroundworker=null;
+let defaultheight=200;
+let defaultwindow=.05;
+let defaultnoisecutoff=.75;
+let defaultbackgroundline=.9;
+const getskeldebounce=debounce(getskel,100);
+const photooptionsdiv=document.createElement('div');
+photooptionsdiv.style.position="fixed";
+photooptionsdiv.style.top=0;
+photooptionsdiv.style.left=0;
+photooptionsdiv.style.zIndex=101;
+photooptionsdiv.style.display="none";
+document.body.appendChild(photooptionsdiv);
+const openclosephotooptions=document.createElement("button");
+openclosephotooptions.style.opacity=.95;
+openclosephotooptions.innerText="⚙";
+openclosephotooptions.onclick=()=>{
+    if(photocontroldiv.checkVisibility()){
+        photocontroldiv.style.display="none";
+    }else{
+        photocontroldiv.style.display="grid";
+    }
+}
+const photocontroldiv=document.createElement('div');
+photocontroldiv.style.display="grid";
+photocontroldiv.style.gridTemplateColumns="min-content 100%";
+photocontroldiv.style.display='none';
+const imgheightlabel=document.createElement('div')
+imgheightlabel.style.gridColumn="span 2";
+imgheightlabel.innerHTML="Height of image for processing.";
+const imgheightvalue=document.createElement('input');
+imgheightvalue.type='number';
+imgheightvalue.style.width='50px';
+imgheightvalue.min=20;
+imgheightvalue.step=1;
+imgheightvalue.value=defaultheight;
+const imgheightslider=document.createElement('input');
+imgheightslider.type="range";
+imgheightslider.min=20;
+imgheightslider.max=1000;
+imgheightslider.value=defaultheight;
+imgheightvalue.onchange=()=>{
+    imgheightslider.value=imgheightvalue.value;
+    drawphoto();
+}
+imgheightslider.onchange=()=>{
+    imgheightvalue.value=imgheightslider.value;
+    drawphoto();
+};
+const imgwindowlabel=document.createElement('div')
+imgwindowlabel.style.gridColumn="span 2";
+imgwindowlabel.innerHTML="Fraction of image used for thresholding.";
+const imgwindowvalue=document.createElement('input');
+imgwindowvalue.type='number';
+imgwindowvalue.style.width='50px';
+imgwindowvalue.min=.0001;
+imgwindowvalue.step=.0001;
+imgwindowvalue.value=defaultwindow;
+const imgwindowslider=document.createElement('input');
+imgwindowslider.type="range";
+imgwindowslider.min=.0001;
+imgwindowslider.step=.0001;
+imgwindowslider.max=1;
+imgwindowslider.value=defaultwindow;
+imgwindowvalue.onchange=()=>{
+    imgwindowslider.value=imgwindowvalue.value;
+    drawphoto();
+}
+imgwindowslider.onchange=()=>{
+    imgwindowvalue.value=imgwindowslider.value;
+    drawphoto();
+};
+const imgnoiselabel=document.createElement('div')
+imgnoiselabel.style.gridColumn="span 2";
+imgnoiselabel.innerHTML="Fraction of maximum letter size considered noise.";
+const imgnoisevalue=document.createElement('input');
+imgnoisevalue.type='number';
+imgnoisevalue.style.width='50px';
+imgnoisevalue.min=0;
+imgnoisevalue.step=.0001;
+imgnoisevalue.value=defaultnoisecutoff**10;
+const imgnoiseslider=document.createElement('input');
+imgnoiseslider.type="range";
+imgnoiseslider.min=0;
+imgnoiseslider.step=.0001;
+imgnoiseslider.max=1;
+imgnoiseslider.value=defaultnoisecutoff;
+imgnoisevalue.onchange=()=>{
+    imgwindowslider.value=imgnoisevalue.value**(1/10);
+    drawphoto();
+}
+imgnoiseslider.onchange=()=>{
+    imgnoisevalue.value=imgnoiseslider.value**10;
+    drawphoto();
+};
+const imgbackgroundlinelabel=document.createElement('div')
+imgbackgroundlinelabel.style.gridColumn="span 2";
+imgbackgroundlinelabel.innerHTML="Background line removal tolerance.";
+const imgbackgroundlinevalue=document.createElement('input');
+imgbackgroundlinevalue.type='number';
+imgbackgroundlinevalue.style.width='50px';
+imgbackgroundlinevalue.min=0.1;
+imgbackgroundlinevalue.step=.01;
+imgbackgroundlinevalue.value=defaultbackgroundline;
+const imgbackgroundlineslider=document.createElement('input');
+imgbackgroundlineslider.type="range";
+imgbackgroundlineslider.min=0.1;
+imgbackgroundlineslider.step=.01;
+imgbackgroundlineslider.max=1;
+imgbackgroundlineslider.value=defaultbackgroundline;
+imgbackgroundlinevalue.onchange=()=>{
+    imgbackgroundlineslider.value=imgbackgroundlinevalue.value;
+    drawphoto();
+}
+imgbackgroundlineslider.onchange=()=>{
+    imgbackgroundlinevalue.value=imgbackgroundlineslider.value;
+    drawphoto();
+};
+photooptionsdiv.appendChild(openclosephotooptions);
+photooptionsdiv.appendChild(photocontroldiv);
+photocontroldiv.appendChild(imgheightlabel);
+photocontroldiv.appendChild(imgheightvalue);
+photocontroldiv.appendChild(imgheightslider);
+photocontroldiv.appendChild(imgwindowlabel);
+photocontroldiv.appendChild(imgwindowvalue);
+photocontroldiv.appendChild(imgwindowslider);
+photocontroldiv.appendChild(imgnoiselabel);
+photocontroldiv.appendChild(imgnoisevalue);
+photocontroldiv.appendChild(imgnoiseslider);
+photocontroldiv.appendChild(imgbackgroundlinelabel);
+photocontroldiv.appendChild(imgbackgroundlinevalue);
+photocontroldiv.appendChild(imgbackgroundlineslider);
+const canvasphoto=document.createElement('canvas');
+canvasphoto.style.position="fixed";
+canvasphoto.style.top=0;
+canvasphoto.style.left=0;
+canvasphoto.style.width="100dvw";
+canvasphoto.style.height="100dvh";
+canvasphoto.style.objectFit="contain";
+canvasphoto.style.zIndex=100;
+canvasphoto.style.display="none";
+canvasphoto.style.touchAction="none";
+document.body.appendChild(canvasphoto);
+const okbutton=document.createElement('button');
+const cancelbutton=document.createElement('button');
+okbutton.style.position="fixed";
+okbutton.style.zIndex=101;
+okbutton.style.display="none";
+okbutton.style.opacity=.5;
+okbutton.innerText="Ok";
+okbutton.onclick=async (e)=>{
+    //draw on input canvas
+    if(letterskels.length>0){
+        clearletters();
+        let xmin=Number.POSITIVE_INFINITY;
+        let xmax=Number.NEGATIVE_INFINITY;
+        let ymin=Number.POSITIVE_INFINITY;
+        let ymax=Number.NEGATIVE_INFINITY;
+        points.x.splice(0);
+        points.y.splice(0);
+        for(let i=0;i<letterskels.length;i++){
+            for(let ii=0;ii<letterskels[i].length;ii++){
+                points.x.push(...letterskels[i][ii].map(v=>v[0]),NaN);
+                points.y.push(...letterskels[i][ii].map(v=>v[1]),NaN);
+            }
+            xmin=Math.min(xmin,...points.x.filter(v=>isFinite(v)));
+            xmax=Math.max(xmax,...points.x.filter(v=>isFinite(v)));
+            ymin=Math.min(ymin,...points.y.filter(v=>isFinite(v)));
+            ymax=Math.max(ymax,...points.y.filter(v=>isFinite(v)));
+            lines.push(structuredClone(points));
+            points.x.splice(0);
+            points.y.splice(0);
+        }
+        await lines2letters([xmin,xmax,ymin,ymax]);
+        letters2eq()
+        seeall();
+        letterskels=[];
+        canvasphoto.style.display="none";
+        okbutton.style.display="none";
+        cancelbutton.style.display="none";
+        photooptionsdiv.style.display="none";
+        eq.intsubdialog=undefined;
+    }
+}
+cancelbutton.style.position="fixed";
+cancelbutton.style.zIndex=101;
+cancelbutton.style.display="none";
+cancelbutton.style.opacity=.5;
+cancelbutton.innerText="Cancel";
+cancelbutton.onclick=(e)=>{
+    letterskels=[];
+    canvasphoto.style.display="none";
+    okbutton.style.display="none";
+    cancelbutton.style.display="none";
+    photooptionsdiv.style.display="none";
+    eq.intsubdialog=undefined;
+}
+document.body.appendChild(okbutton);
+document.body.appendChild(cancelbutton);
+const ctxphoto=canvasphoto.getContext('2d');
+const img = new Image();
+let imageData;
+let viewbox=[0,0,300,100];
+let processbox=[0,0,300,100];
+let boxlinewidth=1;
+let pointerdownaction='';
+const activePointers =[];
+let xyprev;
+let letterskels=[];
+document.getElementById("takephoto").addEventListener('change',(event)=>{
+    const file=event.target.files[0];
+    if(file){
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            img.src = e.target.result;
+            canvasphoto.style.display = 'block';
+            cancelbutton.style.display='block';
+            okbutton.style.display='block';
+            photooptionsdiv.style.display="block";
+            document.getElementById("takephoto").value="";
+        };
+        reader.readAsDataURL(file);
+    }
+});
+function drawphoto(){
+    canvasphoto.width=Math.round(viewbox[2]);
+    canvasphoto.height=Math.round(viewbox[3]);
+    ctxphoto.putImageData(imageData, -viewbox[0],-viewbox[1],...viewbox.map(v=>Math.round(v)));
+    ctxphoto.lineWidth=boxlinewidth;
+    const gradient = ctxphoto.createLinearGradient(processbox[0]-viewbox[0],processbox[1]-viewbox[1],processbox[0]-viewbox[0]+processbox[2],processbox[1]-viewbox[1]+processbox[3]);
+    for (let i = 0; i <= 360*10; i += 10) {
+        const position = i/(360*10);
+        gradient.addColorStop(position, `hsl(${i%360}, 100%, 50%)`);
+    }
+    ctxphoto.strokeStyle = gradient;
+    ctxphoto.strokeRect(processbox[0]-viewbox[0],processbox[1]-viewbox[1],processbox[2],processbox[3]);
+    let xyc=canvas2pagecoords(processbox[0]-viewbox[0],processbox[1]-viewbox[1]+processbox[3]);
+    let xyok=canvas2pagecoords(processbox[0]-viewbox[0]+processbox[2],processbox[1]-viewbox[1]+processbox[3]);
+    let okleft=xyok[0]-okbutton.offsetWidth;
+    let cright=xyc[0]+cancelbutton.offsetWidth;
+    let cleft=xyc[0];
+    if(cright>okleft){
+        let diff=cright-okleft;
+        cleft-=diff/2;
+        okleft+=diff/2;
+    }
+    let h=xyc[1];
+    if(h+okbutton.offsetHeight>document.documentElement.clientHeight){
+        h-=h+okbutton.offsetHeight-document.documentElement.clientHeight
+    }
+    cancelbutton.style.left=cleft+'px';
+    cancelbutton.style.top=h+'px';
+    okbutton.style.left=okleft+'px';
+    okbutton.style.top=h+'px';
+    options={
+        scaleheight:imgheightslider.value,
+        windowfrac:imgwindowslider.value,
+        noisemin:imgnoiseslider.value**10,
+        backgroundlinetol:imgbackgroundlineslider.value,
+    };
+    getskeldebounce({"options":options,"typed":false,"processbox":processbox,"width":imageData.width,"height":imageData.height,"image":new Uint8ClampedArray(imageData.data)});
+}
+function page2canvascoords(x,y){
+    bound=canvasphoto.getBoundingClientRect();
+    if(canvasphoto.width/canvasphoto.height>bound.width/bound.height){
+        let scale=canvasphoto.width/bound.width;
+        x=(x-bound.left)*scale;
+        y=(y-bound.top)*scale-(bound.height*scale-canvasphoto.height)/2;
+    }else{
+        let scale=canvasphoto.height/bound.height;
+        x=(x-bound.left)*scale-(bound.width*scale-canvasphoto.width)/2;
+        y=(y-bound.top)*scale;
+    }
+    x+=viewbox[0];
+    y+=viewbox[1];
+    // if(imageData!==undefined){
+    //     x*=imageData.width/canvasphoto.width;
+    //     y*=imageData.height/canvasphoto.height;
+    // }
+    return [x,y];
+}
+function canvas2pagecoords(x,y){
+    let bound=canvasphoto.getBoundingClientRect();
+    if(canvasphoto.width/canvasphoto.height>bound.width/bound.height){
+        let scale=canvasphoto.width/bound.width;
+        x=x/scale+bound.left;
+        y=(2*y+bound.height*scale-canvasphoto.height)/(2*scale)+bound.top;
+    }else{
+        let scale=canvasphoto.height/bound.height;
+        x=(2*x+bound.width*scale-canvasphoto.width)/(2*scale)+bound.left;
+        y=y/scale+bound.top;
+    }
+    // x+=viewbox[0];
+    // y+=viewbox[1];
+    return [x,y];
+}
+canvasphoto.addEventListener('pointerdown',(e)=>{
+    e.preventDefault();
+    activePointers.push(event);
+    let xy=page2canvascoords(e.clientX,e.clientY);
+    if(activePointers.length<=1){
+        xyprev=xy;
+        if(Math.abs(xy[0]-processbox[0])<boxlinewidth&&Math.abs(xy[1]-(processbox[1]+processbox[3]))<boxlinewidth||Math.abs(xy[0]-(processbox[0]+processbox[2]))<boxlinewidth&&Math.abs(xy[1]-processbox[1])<boxlinewidth){
+            if(Math.abs(xy[0]-processbox[0])<boxlinewidth&&Math.abs(xy[1]-(processbox[1]+processbox[3]))<boxlinewidth){
+                pointerdownaction='sw-resize';
+            }else{
+                pointerdownaction='ne-resize';
+            }
+        }else if(Math.abs(xy[0]-processbox[0])<boxlinewidth&&Math.abs(xy[1]-processbox[1])<boxlinewidth||Math.abs(xy[0]-(processbox[0]+processbox[2]))<boxlinewidth&&Math.abs(xy[1]-(processbox[1]+processbox[3]))<boxlinewidth){
+            if(Math.abs(xy[0]-processbox[0])<boxlinewidth&&Math.abs(xy[1]-processbox[1])<boxlinewidth){
+                pointerdownaction='nw-resize';
+            }else{
+                pointerdownaction='se-resize';
+            }
+        }else if((Math.abs(xy[1]-processbox[1])<boxlinewidth||Math.abs(xy[1]-(processbox[1]+processbox[3]))<boxlinewidth)&&xy[0]>processbox[0]&&xy[0]<processbox[0]+processbox[2]){
+            if(Math.abs(xy[1]-processbox[1])<boxlinewidth){
+                pointerdownaction='n-resize';
+            }else{
+                pointerdownaction='s-resize';
+            }
+        }else if((Math.abs(xy[0]-processbox[0])<boxlinewidth||Math.abs(xy[0]-(processbox[0]+processbox[2]))<boxlinewidth)&&xy[1]>processbox[1]&&xy[1]<processbox[1]+processbox[3]){
+            if(Math.abs(xy[0]-processbox[0])<boxlinewidth){
+                pointerdownaction='w-resize';
+            }else{
+                pointerdownaction='e-resize';
+            }
+        }else if(Math.abs(xy[0])>processbox[0]&&Math.abs(xy[0])<processbox[0]+processbox[2]&&Math.abs(xy[1])>processbox[1]&&Math.abs(xy[1])<processbox[1]+processbox[3]){
+            pointerdownaction='pan';
+        }else if(!(Math.abs(xy[0])>processbox[0]&&Math.abs(xy[0])<processbox[0]+processbox[2]&&Math.abs(xy[1])>processbox[1]&&Math.abs(xy[1])<processbox[1]+processbox[3])){
+            pointerdownaction='translate';
+        }
+    }
+    // console.log("down",pointerdownaction,activePointers);
+});
+canvasphoto.addEventListener('pointermove',(e)=>{
+    e.preventDefault();
+    // console.log("move",pointerdownaction,activePointers)
+    if(activePointers.length<=1){
+        ctxphoto.beginPath();
+        let xy=page2canvascoords(e.clientX,e.clientY);
+        if(Math.abs(xy[0]-processbox[0])<boxlinewidth&&Math.abs(xy[1]-(processbox[1]+processbox[3]))<boxlinewidth||Math.abs(xy[0]-(processbox[0]+processbox[2]))<boxlinewidth&&Math.abs(xy[1]-processbox[1])<boxlinewidth){
+            canvasphoto.style.cursor='nesw-resize';
+        }else if(Math.abs(xy[0]-processbox[0])<boxlinewidth&&Math.abs(xy[1]-processbox[1])<boxlinewidth||Math.abs(xy[0]-(processbox[0]+processbox[2]))<boxlinewidth&&Math.abs(xy[1]-(processbox[1]+processbox[3]))<boxlinewidth){
+            canvasphoto.style.cursor='nwse-resize';
+        }else if((Math.abs(xy[1]-processbox[1])<boxlinewidth||Math.abs(xy[1]-(processbox[1]+processbox[3]))<boxlinewidth)&&xy[0]>processbox[0]&&xy[0]<processbox[0]+processbox[2]){
+            canvasphoto.style.cursor='ns-resize';
+        }else if((Math.abs(xy[0]-processbox[0])<boxlinewidth||Math.abs(xy[0]-(processbox[0]+processbox[2]))<boxlinewidth)&&xy[1]>processbox[1]&&xy[1]<processbox[1]+processbox[3]){
+            canvasphoto.style.cursor='ew-resize';
+        }else if(Math.abs(xy[0])>processbox[0]&&Math.abs(xy[0])<processbox[0]+processbox[2]&&Math.abs(xy[1])>processbox[1]&&Math.abs(xy[1])<processbox[1]+processbox[3]){
+            if(pointerdownaction==='pan'){
+                canvasphoto.style.cursor='grabbing';
+            }else{
+                canvasphoto.style.cursor='grab';
+            }
+        }else{
+            canvasphoto.style.cursor='default';
+        }
+        if(Array.isArray(xyprev)&&activePointers.length===1){
+            let xchange=xy[0]-xyprev[0];
+            let ychange=xy[1]-xyprev[1];
+            switch(pointerdownaction){
+                case 'sw-resize':
+                    processbox[3]+=ychange;
+                    processbox[0]+=xchange;
+                    processbox[2]-=xchange;
+                    break
+                case 'ne-resize':
+                    processbox[1]+=ychange;
+                    processbox[3]-=ychange;
+                    processbox[2]+=xchange;
+                    break
+                case 'nw-resize':
+                    processbox[1]+=ychange;
+                    processbox[3]-=ychange;
+                    processbox[0]+=xchange;
+                    processbox[2]-=xchange;
+                    break
+                case 'se-resize':
+                    processbox[3]+=ychange;
+                    processbox[2]+=xchange;
+                    break
+                case 'n-resize':
+                    processbox[1]+=ychange;
+                    processbox[3]-=ychange;
+                    break
+                case 's-resize':
+                    processbox[3]+=ychange;
+                    break
+                case 'w-resize':
+                    processbox[0]+=xchange;
+                    processbox[2]-=xchange;
+                    break
+                case 'e-resize':
+                    processbox[2]+=xchange;
+                    break
+                case 'pan':
+                    processbox[0]+=xchange;
+                    processbox[1]+=ychange;
+                    break
+                case 'translate':
+                    viewbox[0]-=xchange;
+                    viewbox[1]-=ychange;
+                    if(viewbox[0]<0){
+                        viewbox[0]=0;
+                    }
+                    if(viewbox[1]<0){
+                        viewbox[1]=0;
+                    }
+                    if(viewbox[0]+viewbox[2]>imageData.width){
+                        viewbox[0]=imageData.width-viewbox[2];
+                    }
+                    if(viewbox[1]+viewbox[3]>imageData.height){
+                        viewbox[1]=imageData.height-viewbox[3];
+                    }
+                    break
+            }
+            processbox[2]=Math.min(Math.max(1,Math.round(processbox[2])),imageData.width);
+            processbox[3]=Math.min(Math.max(1,Math.round(processbox[3])),imageData.height);
+            processbox[0]=Math.min(Math.max(0,Math.round(processbox[0])),imageData.width-processbox[2]);
+            processbox[1]=Math.min(Math.max(0,Math.round(processbox[1])),imageData.height-processbox[3]);
+            xyprev=xy;
+            drawphoto();
+        }
+    }else if(activePointers.length===2){
+        let evCache=[...activePointers];
+        evCache[evCache.findIndex(v=>v.pointerId===e.pointerId)]=e;
+        const curDiff = Math.hypot(evCache[0].clientX - evCache[1].clientX,evCache[0].clientY - evCache[1].clientY);
+        if(prevDiff!==-1){
+            let xy=page2canvascoords((evCache[0].clientX+evCache[1].clientX)/2,(evCache[0].clientY+evCache[1].clientY)/2);
+            let scale=prevDiff/curDiff;
+            if(Math.min(viewbox[2]*scale,viewbox[3]*scale)>1){
+                viewbox[0]=(viewbox[0]-xy[0])*scale+xy[0];
+                viewbox[1]=(viewbox[1]-xy[1])*scale+xy[1];
+                viewbox[2]*=scale;
+                viewbox[3]*=scale;
+                if(bound.width/bound.height<viewbox[2]/viewbox[3]){
+                    viewbox[3]=Math.min(imageData.height,viewbox[2]*bound.height/bound.width);
+                }else if(bound.width/bound.height>viewbox[2]/viewbox[3]){
+                    viewbox[2]=Math.min(imageData.width,viewbox[3]*bound.width/bound.height);
+                }
+                if(viewbox[0]<0){
+                    viewbox[0]=0;
+                }
+                if(viewbox[1]<0){
+                    viewbox[1]=0;
+                }
+                if(viewbox[0]+viewbox[2]>imageData.width){
+                    viewbox[0]=Math.max(0,imageData.width-viewbox[2]);
+                }
+                if(viewbox[1]+viewbox[3]>imageData.height){
+                    viewbox[1]=Math.max(0,imageData.height-viewbox[3]);
+                }
+                if(viewbox[2]>=imageData.width&&viewbox[3]>=imageData.height){
+                    viewbox[0]=0;
+                    viewbox[1]=0;
+                    viewbox[2]=imageData.width;
+                    viewbox[3]=imageData.height;
+                }
+                drawphoto();
+            }
+        }
+        prevDiff = curDiff;
+    }
+});
+canvasphoto.addEventListener('pointerup',(e)=>{
+    e.preventDefault();
+    // console.log("up",event.pointerId);
+    let erem=activePointers.findIndex(v=>v.id===e.id);
+    activePointers.splice(erem,1);
+    pointerdownaction='';
+    xyprev=undefined;
+    prevDiff=-1;
+});
+canvasphoto.addEventListener('pointercancel',(e)=>{
+    e.preventDefault();
+    let erem=activePointers.findIndex(v=>v.id===e.id);
+    activePointers.splice(erem,1);
+    pointerdownaction='';
+    xyprev=undefined;
+    prevDiff=-1;
+});
+canvasphoto.addEventListener('pointerleave',(e)=>{
+    e.preventDefault();
+    let erem=activePointers.findIndex(v=>v.id===e.id);
+    activePointers.splice(erem,1);
+    pointerdownaction='';
+    xyprev=undefined;
+    prevDiff=-1;
+});
+canvasphoto.addEventListener('wheel',(e)=>{
+    e.preventDefault();
+    let scale=e.deltaY<0?.9:1.1;
+    if(Math.min(viewbox[2]*scale,viewbox[3]*scale)>1){
+        let xy=page2canvascoords(e.clientX,e.clientY);
+        viewbox[0]=(viewbox[0]-xy[0])*scale+xy[0];
+        viewbox[1]=(viewbox[1]-xy[1])*scale+xy[1];
+        viewbox[2]*=scale;
+        viewbox[3]*=scale;
+        let bound=canvasphoto.getBoundingClientRect();
+        if(bound.width/bound.height<viewbox[2]/viewbox[3]){
+            viewbox[3]=Math.min(imageData.height,viewbox[2]*bound.height/bound.width);
+        }else if(bound.width/bound.height>viewbox[2]/viewbox[3]){
+            viewbox[2]=Math.min(imageData.width,viewbox[3]*bound.width/bound.height);
+        }
+        if(viewbox[0]<0){
+            viewbox[0]=0;
+        }
+        if(viewbox[1]<0){
+            viewbox[1]=0;
+        }
+        if(viewbox[0]+viewbox[2]>imageData.width){
+            viewbox[0]=Math.max(0,imageData.width-viewbox[2]);
+        }
+        if(viewbox[1]+viewbox[3]>imageData.height){
+            viewbox[1]=Math.max(0,imageData.height-viewbox[3]);
+        }
+        if(viewbox[2]>=imageData.width&&viewbox[3]>=imageData.height){
+            viewbox[0]=0;
+            viewbox[1]=0;
+            viewbox[2]=imageData.width;
+            viewbox[3]=imageData.height;
+        }
+        drawphoto();
+    }
+});
+img.onload=()=>{
+    eq.intsubdialog='';
+    canvasphoto.width=img.naturalWidth;
+    canvasphoto.height=img.naturalHeight;
+    ctxphoto.drawImage(img, 0, 0);
+    imageData = ctxphoto.getImageData(0, 0, canvasphoto.width, canvasphoto.height);
+    viewbox=[0,0,canvasphoto.width,canvasphoto.height];
+    if(canvasphoto.width*canvasphoto.height<1e6){
+        processbox=[0,0,canvasphoto.width,canvasphoto.height];
+    }else{
+        processbox=[Math.round(canvasphoto.width/2-canvasphoto.width/4),Math.round(canvasphoto.height/2-canvasphoto.height/4),Math.round(canvasphoto.width/2),Math.round(canvasphoto.height/2)];
+    }
+    boxlinewidth=Math.ceil((canvasphoto.width*canvasphoto.height)**.5*.01);
+    drawphoto();
+}
+function rgb2hsv(data){
+    let hsv=new Array(data.length).fill(0);
+    for (let i = 0; i < data.length; i += 4) {
+        let r=data[i]/255;
+        let g=data[i+1]/255;
+        let b=data[i+2]/255;
+        let cmax = Math.max(r,g,b);
+        let cmin = Math.min(r,g,b);
+        let diff = cmax-cmin;
+        let h=-1
+        let s=-1;
+        if (cmax===cmin){
+            h = 0;
+        }else if(cmax===r){
+            h=(60*((g - b)/diff)+360)%360;
+        }else if (cmax===g){
+            h=(60*((b - r)/diff)+120)%360;
+        }else if (cmax===b){
+            h=(60*((r-g)/diff)+240)%360;
+        }
+        if(cmax===0){
+            s=0;
+        }else{
+            s=(diff/cmax)*100;
+        }
+        let v=cmax*100;
+        hsv[i]=h;
+        hsv[i+1]=s;
+        hsv[i+2]=v;
+        hsv[i+3]=data[i+3];
+    }
+    return hsv;
+}
+function hsv2rgb(data){
+    let rgb=new Array(data.length).fill(0);
+    for (let i = 0; i < data.length; i += 4) {
+        let h=data[i];
+        let s=data[i+1]/100;
+        let v=data[i+2]/100;
+        let c=v*s;
+        let H=h/60;
+        let x=c*(1-Math.abs(H%2-1))
+        let r=0;
+        let g=0;
+        let b=0;
+        if(H<1){
+            r=c;
+            g=x;
+        }else if(H<2){
+            r=x;
+            g=c;
+        }else if(H<3){
+            g=c;
+            b=x;
+        }else if(H<4){
+            g=x;
+            b=c;
+        }else if(H<5){
+            r=x;
+            b=c;
+        }else if(H<6){
+            r=c;
+            b=x;
+        }
+        let m=v-c;
+        r=(r+m)*255;
+        g=(g+m)*255;
+        b=(b+m)*255;
+        rgb[i]=r;
+        rgb[i+1]=g;
+        rgb[i+2]=b;
+        rgb[i+3]=data[i+3];
+    }
+    return rgb;
+}
+function letterskeleton(letterbound){
+    function getboundloops(xy,xyb,onepath=false){
+        xy=[...xy];
+        xyb=[...xyb];
+        while(xy.length>0){
+            let distsfromcp=xy.map(v=>Math.pow(v[0]-xyb[xyb.length-1][xyb[xyb.length-1].length-1][0],2)+Math.pow(v[1]-xyb[xyb.length-1][xyb[xyb.length-1].length-1][1],2));
+            let argmindist=distsfromcp.reduce((pv,cv,ci,arr)=>cv<arr[pv]?ci:pv,0);
+            let argmindistall=[];
+            for(let i=0;i<distsfromcp.length;i++){
+                if(distsfromcp[argmindist]===distsfromcp[i]){
+                    argmindistall.push(i);
+                }
+            }
+            if(argmindistall.length>1){
+                let foundpath=false;
+                for(let i=0;i<argmindistall.length;i++){
+                    let xybt=[...xyb[xyb.length-1]];
+                    let xyt=[...xy];
+                    xybt.push(xyt.splice(argmindistall[i],1)[0]);
+                    [xybt,xyt]=getboundloops(xyt,[xybt],true);
+                    if(Math.pow(xybt[0][0][0]-xybt[0][xybt[0].length-1][0],2)+Math.pow(xybt[0][0][1]-xybt[0][xybt[0].length-1][1],2)<=5){
+                        xy=[...xyt];
+                        xyb[xyb.length-1]=xybt[0];
+                        foundpath=true;
+                        break
+                    }
+                }
+                if(foundpath){
+                    if(xy.length<=1||onepath){
+                        return [xyb,xy];
+                    }else{
+                        xyb[xyb.length]=xy.splice(xy.length-1,1);
+                        distsfromcp=xy.map(v=>Math.pow(v[0]-xyb[xyb.length-1][xyb[xyb.length-1].length-1][0],2)+Math.pow(v[1]-xyb[xyb.length-1][xyb[xyb.length-1].length-1][1],2));
+                        argmindist=distsfromcp.reduce((pv,cv,ci,arr)=>cv<arr[pv]?ci:pv,0);
+                    }
+                }
+            }
+            if(distsfromcp[argmindist]>5){
+                if(onepath){
+                    return [xyb,xy];
+                }
+                xyb[xyb.length]=[];
+            }
+            xyb[xyb.length-1].push(xy.splice(argmindist,1)[0]);
+        }
+        return [xyb,xy];
+    }
+    function inletter(x,y,edges,shouldbein){
+        let inone=false;
+        let notinhole=true;
+        for(let i=0;i<shouldbein.length;i++){
+            let inpoly=inpolygon(x,y,edges[i].x,edges[i].y);
+            if(inpoly.every(v=>v)&&shouldbein[i]){
+                inone=true;
+            }
+            if(!shouldbein[i]&&inpoly.some(v=>v)){
+                notinhole=false;
+            }
+        }
+        return inone&&notinhole;
+    }
+    function numbconnections(sec){
+        let connections=[];
+        for(let i=0;i<sec.length;i++){
+            connections.push([0,0]);
+            for(let ii=0;ii<sec.length;ii++){
+                if(i===ii){
+                    continue
+                }
+                if(sec[i][0][0]===sec[ii][0][0]&&sec[i][0][1]===sec[ii][0][1]||sec[i][0][0]===sec[ii][sec[ii].length-1][0]&&sec[i][0][1]===sec[ii][sec[ii].length-1][1]){
+                    connections[i][0]++;
+                }
+                if(sec[i][sec[i].length-1][0]===sec[ii][0][0]&&sec[i][sec[i].length-1][1]===sec[ii][0][1]||sec[i][sec[i].length-1][0]===sec[ii][sec[ii].length-1][0]&&sec[i][sec[i].length-1][1]===sec[ii][sec[ii].length-1][1]){
+                    connections[i][1]++;
+                }
+            }
+        }
+        return connections;
+    }
+    let xyb=[];
+    xyb[0]=[letterbound[letterbound.length-1]];
+    xyb=getboundloops(letterbound.slice(0,letterbound.length-1),xyb)[0];
+    let edges=[];
+    let lambda=1e-3;
+    for(let i=0;i<xyb.length;i++){
+        let keepevery=Math.ceil(xyb[i].length/100);
+        let xb=[];
+        let yb=[];
+        for(let ii=0;ii<xyb[i].length;ii+=keepevery){
+            xb.push(xyb[i][ii][0]);
+            yb.push(xyb[i][ii][1]);
+        }
+        xb.push(xb[0]);
+        yb.push(yb[0]);
+        let t=[0];
+        for(let ii=0;ii<xb.length-1;ii++){
+            t.push(t[ii]+((xb[ii+1]-xb[ii])**2+(yb[ii+1]-yb[ii])**2)**.5);
+        }
+        let cx=smoothingspline(t,xb,lambda);
+        let cy=smoothingspline(t,yb,lambda);
+        let tt=linspace(0,t[t.length-1],100);
+        let ex=evalsspline(tt,t,cx);
+        let ey=evalsspline(tt,t,cy);
+        let A=polyarea(ex,ey);
+        edges[i]={"t":tt,"x":ex,"y":ey,"A":A}
+    }
+    let maxA=Math.max(...edges.map(v=>v.A));
+    edges=edges.filter(v=>v.A>maxA/100);
+    let shouldbein=new Array(edges.length).fill(true);
+    let allx=[];
+    let ally=[];
+    for(let i=0;i<edges.length;i++){
+        allx.push(...edges[i].x);
+        ally.push(...edges[i].y);
+        for(let ii=0;ii<edges.length;ii++){
+            if(i===ii){
+                continue
+            }
+            if(inpolygon(edges[i].x,edges[i].y,edges[ii].x,edges[ii].y).some(v=>v)){
+                shouldbein[i]=false;
+            }
+        }
+    }
+    if(shouldbein.every(v=>!v)){
+        //First issue: h not getting complete boundary get boundary loops needs work - join paths that are almost loops?
+        shouldbein=new Array(edges.length).fill(true);
+        console.log("This is a problem all shapes are inside each other.");
+    }
+
+    let vxy=voronoi(allx,ally);
+    for(let i=vxy.x.length-1;i>=0;i--){
+        if(!inletter(vxy.x[i],vxy.y[i],edges,shouldbein)){
+            vxy.x.splice(i,1);
+            vxy.y.splice(i,1);
+        }
+    }
+    //lines between joints - adding past joint currently
+    let sec=[[[vxy.x[0][0],vxy.y[0][0]],[vxy.x[0][1],vxy.y[0][1]]]];
+    vxy.x.splice(0,1);
+    vxy.y.splice(0,1);
+    let cs=0;
+    while(vxy.x.length>0){
+        let iequalx=vxy.x.map(v=>v[0]).reduce((pv,cv,ci)=>{if(cv===sec[cs][0][0]){pv.add(ci)}return pv},new Set());
+        let iequaly=vxy.y.map(v=>v[0]).reduce((pv,cv,ci)=>{if(cv===sec[cs][0][1]){pv.add(ci)}return pv},new Set());
+        let connectedstart0=[...iequalx.intersection(iequaly)];
+        iequalx=vxy.x.map(v=>v[1]).reduce((pv,cv,ci)=>{if(cv===sec[cs][0][0]){pv.add(ci)}return pv},new Set());
+        iequaly=vxy.y.map(v=>v[1]).reduce((pv,cv,ci)=>{if(cv===sec[cs][0][1]){pv.add(ci)}return pv},new Set());
+        let connectedstart1=[...iequalx.intersection(iequaly)];
+        iequalx=vxy.x.map(v=>v[0]).reduce((pv,cv,ci)=>{if(cv===sec[cs][sec[cs].length-1][0]){pv.add(ci)}return pv},new Set());
+        iequaly=vxy.y.map(v=>v[0]).reduce((pv,cv,ci)=>{if(cv===sec[cs][sec[cs].length-1][1]){pv.add(ci)}return pv},new Set());
+        let connectedend0=[...iequalx.intersection(iequaly)];
+        iequalx=vxy.x.map(v=>v[1]).reduce((pv,cv,ci)=>{if(cv===sec[cs][sec[cs].length-1][0]){pv.add(ci)}return pv},new Set());
+        iequaly=vxy.y.map(v=>v[1]).reduce((pv,cv,ci)=>{if(cv===sec[cs][sec[cs].length-1][1]){pv.add(ci)}return pv},new Set());
+        let connectedend1=[...iequalx.intersection(iequaly)];
+        let torem=[];
+        if(connectedstart0.length===1&&connectedstart1.length===0){
+            sec[cs].unshift([vxy.x[connectedstart0[0]][1],vxy.y[connectedstart0[0]][1]]);
+            torem.push(connectedstart0[0]);
+        }
+        if(connectedstart0.length===0&&connectedstart1.length===1){
+            sec[cs].unshift([vxy.x[connectedstart1[0]][0],vxy.y[connectedstart1[0]][0]]);
+            torem.push(connectedstart1[0]);
+        }
+        if(connectedend0.length===1&&connectedend1.length===0){
+            sec[cs].push([vxy.x[connectedend0[0]][1],vxy.y[connectedend0[0]][1]]);
+            torem.push(connectedend0[0]);
+        }
+        if(connectedend0.length===0&&connectedend1.length===1){
+            sec[cs].push([vxy.x[connectedend1[0]][0],vxy.y[connectedend1[0]][0]]);
+            torem.push(connectedend1[0]);
+        }
+        torem.sort((a,b)=>b-a);
+        for(let i=0;i<torem.length;i++){
+            vxy.x.splice(torem[i],1);
+            vxy.y.splice(torem[i],1);
+        }
+        if(connectedstart0.length+connectedstart1.length!==1&&connectedend0.length+connectedend1.length!==1){
+            let othersecs=[...new Set([...connectedstart0,...connectedstart1,...connectedend0,...connectedend1])];
+            othersecs.sort((a,b)=>a-b);
+            for(let i=othersecs.length-1;i>=0;i--){
+                sec.push([[vxy.x[othersecs[i]][0],vxy.y[othersecs[i]][0]],[vxy.x[othersecs[i]][1],vxy.y[othersecs[i]][1]]]);
+                vxy.x.splice(othersecs[i],1);
+                vxy.y.splice(othersecs[i],1);
+            }
+            cs++;
+        }
+        if(cs===sec.length){
+            sec.push([[vxy.x[0][0],vxy.y[0][0]],[vxy.x[0][1],vxy.y[0][1]]]);
+            vxy.x.splice(0,1);
+            vxy.y.splice(0,1);
+        }
+    }
+    //join up if connects to one other path
+    let connections=numbconnections(sec);
+    for(let i=connections.length-1;i>=0;i--){
+        if(connections[i][0]===1||connections[i][1]===1){
+            if(connections[i][0]===1){
+                for(let ii=0;ii<sec.length;ii++){
+                    if(i===ii){
+                        continue
+                    }
+                    if(sec[ii][0][0]===sec[i][0][0]&&sec[ii][0][1]===sec[i][0][1]){
+                        sec[i].splice(0,1).reverse()
+                        sec[ii]=[...sec[i],...sec[ii]];
+                        sec.splice(i,1);
+                        connections=numbconnections(sec);
+                        break
+                    }else if(sec[ii][sec[ii].length-1][0]===sec[i][0][0]&&sec[ii][sec[ii].length-1][0]===sec[i][0][0]){
+                        sec[i].splice(0,1);
+                        sec[ii]=[...sec[ii],...sec[i]];
+                        sec.splice(i,1);
+                        connections=numbconnections(sec);
+                        break
+                    }
+                }
+            }else{
+                for(let ii=0;ii<sec.length;ii++){
+                    if(i===ii){
+                        continue
+                    }
+                    if(sec[ii][0][0]===sec[i][sec[i].length-1][0]&&sec[ii][0][1]===sec[i][sec[i].length-1][1]){
+                        sec[i].splice(sec[i].length-1)
+                        sec[ii]=[...sec[i],...sec[ii]];
+                        sec.splice(i,1);
+                        connections=numbconnections(sec);
+                        break
+                    }else if(sec[ii][sec[ii].length-1][0]===sec[i][sec[i].length-1][0]&&sec[ii][sec[ii].length-1][0]===sec[i][sec[i].length-1][0]){
+                        sec[i].splice(sec[i].length-1).reverse();
+                        sec[ii]=[...sec[ii],...sec[i]];
+                        sec.splice(i,1);
+                        connections=numbconnections(sec);
+                        break
+                    }
+                }
+            }
+        }
+    }
+    //fix line extending from point
+    for(let i=connections.length-1;i>=0;i--){
+        let tail,head;
+        if(connections[i][0]===0&&connections[i][1]===2){
+            tail=sec[i][sec[i].length-1];
+            head=sec[i][0];
+        }else if(connections[i][0]===2&&connections[i][1]===0){
+            tail=sec[i][0];
+            head=sec[i][sec[i].length-1];
+        }else{
+            continue
+        }
+        let csec=[];
+        let tailcsec=[];
+        // let cbound=[];
+        for(let ii=0;ii<sec.length;ii++){
+            if(i===ii){
+                continue
+            }
+            if(tail[0]===sec[ii][0][0]&&tail[1]===sec[ii][0][1]||tail[0]===sec[ii][sec[ii].length-1][0]&&tail[1]===sec[ii][sec[ii].length-1][1]){
+                csec.push(ii);
+                if(tail[0]===sec[ii][0][0]&&tail[1]===sec[ii][0][1]){
+                    tailcsec.push(sec[ii][sec[ii].length-1]);
+                }else{
+                    tailcsec.push(sec[ii][0]);
+                }
+                // if(cbound.length===0){
+                //     cbound=[...sec[ii]];
+                // }else{
+                //     if(cbound[cbound.length-1][0]===sec[ii][0][0]&&cbound[cbound.length-1][1]===sec[ii][0][1]){
+                //         cbound=[[...cbound],...sec[ii]];
+                //     }else if(cbound[cbound.length-1][0]===sec[ii][sec[ii].length-1][0]&&cbound[cbound.length-1][1]===sec[ii][sec[ii].length-1][1]){
+                //         cbound=[[...cbound],...sec[ii].toReversed()];
+                //     }else if(cbound[0][0]===sec[ii][sec[ii].length-1][0]&&cbound[0][1]===sec[ii][sec[ii].length-1][1]){
+                //         cbound=[...sec[ii],[...cbound]];
+                //     }else if(cbound[0][0]===sec[ii][0][0]&&cbound[0][1]===sec[ii][0][1]){
+                //         cbound=[...sec[ii].toReversed(),[...cbound]];
+                //     }
+                // }
+            }
+        }
+        let vc0=[tail[0]-tailcsec[0][0],tail[1]-tailcsec[0][1]];
+        let vc1=[tail[0]-tailcsec[1][0],tail[1]-tailcsec[1][1]];
+        let vn0=[head[0]-tailcsec[0][0],head[1]-tailcsec[0][1]];
+        let vn1=[head[0]-tailcsec[1][0],head[1]-tailcsec[1][1]];
+        let vc0norm=(vc0[0]**2+vc0[1]**2)**.5;
+        let vc1norm=(vc1[0]**2+vc1[1]**2)**.5;
+        let vn0norm=(vn0[0]**2+vn0[1]**2)**.5;
+        let vn1norm=(vn1[0]**2+vn1[1]**2)**.5;
+        let sd0=(vc0[0]*vn0[0]+vc0[1]*vn0[1])/(vc0norm*vn0norm);
+        let sd1=(vc1[0]*vn1[0]+vc1[1]*vn1[1])/(vc1norm*vn1norm);
+        let cvang=(vc0[0]*vc1[0]+vc0[1]*vc1[1])/(vc0norm*vc1norm);
+        let nvang=(vn0[0]*vn1[0]+vn0[1]*vn1[1])/(vn0norm*vn1norm);
+        if(sd0>.95&&sd1>.95&&cvang>0&&nvang>0&&nvang>cvang){
+            let n1=[-vc0[1]/vc0norm,vc0[0]/vc0norm];
+            let n2=[-vc1[1]/vc1norm,vc1[0]/vc1norm];
+            if(Math.max(...sec[csec[0]].map(v=>Math.abs((v[0]-tail[0])*n1[0]+(v[1]-tail[1])*n1[1])/vc0norm),...sec[csec[1]].map(v=>Math.abs((v[0]-tail[0])*n2[0]+(v[1]-tail[1])*n2[1])/vc1norm))<.25){
+                sec[csec[0]]=[tailcsec[0],[...head]];
+                sec[csec[1]]=[tailcsec[1],[...head]];
+                sec.splice(i,1);
+                connections.splice(i,1);
+            }
+        }
+    }
+
+
+    for(let i=0;i<sec.length;i++){
+        ctxphoto.beginPath();
+        ctxphoto.strokeStyle=`hsl(${i/sec.length*360}, 100%, 50%)`;
+        ctxphoto.moveTo(sec[i][0][0],sec[i][0][1]);
+        for(let ii=1;ii<sec[i].length;ii++){
+            ctxphoto.lineTo(sec[i][ii][0],sec[i][ii][1]);
+        }
+        ctxphoto.stroke();
+    }
+
+    console.log("")
+}
+function smoothingspline(x,y,lambda){
+    let h=[];
+    for(let i=0;i<x.length-1;i++){
+        h.push(x[i+1]-x[i]);
+    }
+    let endsdontloop=1;
+    let cc=[];
+    if(y[0]===y[y.length-1]){
+        endsdontloop=0;
+        for(let i=0;i<3*h.length;i++){
+            cc.push(new Array(4*h.length).fill(0));
+        }
+        cc[0][4*h.length-4]=Math.pow(h[h.length-1],0);
+        cc[0][4*h.length-3]=Math.pow(h[h.length-1],1);
+        cc[0][4*h.length-2]=Math.pow(h[h.length-1],2);
+        cc[0][4*h.length-1]=Math.pow(h[h.length-1],3);
+        cc[1][4*h.length-3]=Math.pow(h[h.length-1],0);
+        cc[1][4*h.length-2]=2*Math.pow(h[h.length-1],1);
+        cc[1][4*h.length-1]=3*Math.pow(h[h.length-1],2);
+        cc[2][4*h.length-2]=2*Math.pow(h[h.length-1],0);
+        cc[2][4*h.length-1]=6*Math.pow(h[h.length-1],1);
+        cc[0][0]-=1;
+        cc[1][1]-=1;
+        cc[2][2]-=2;
+        for(let i=0;i<h.length-1;i++){
+            cc[3*[i+1]][4*(i+1)]=-1;
+            cc[3*[i+1]][4*i]=Math.pow(h[i],0);
+            cc[3*[i+1]][4*i+1]=Math.pow(h[i],1);
+            cc[3*[i+1]][4*i+2]=Math.pow(h[i],2);
+            cc[3*[i+1]][4*i+3]=Math.pow(h[i],3);
+            cc[3*[i+1]+1][4*(i+1)+1]=-1;
+            cc[3*[i+1]+1][4*i+1]=Math.pow(h[i],0);
+            cc[3*[i+1]+1][4*i+2]=2*Math.pow(h[i],1);
+            cc[3*[i+1]+1][4*i+3]=3*Math.pow(h[i],2);
+            cc[3*[i+1]+2][4*(i+1)+2]=-2;
+            cc[3*[i+1]+2][4*i+2]=2*Math.pow(h[i],0);
+            cc[3*[i+1]+2][4*i+3]=6*Math.pow(h[i],1);
+        }
+    }else{
+        for(let i=0;i<3*h.length-1;i++){
+            cc.push(new Array(4*h.length).fill(0));
+        }
+        cc[0][2]=2;
+        cc[1][4*h.length-2]=2;
+        cc[1][4*h.length-1]=6*h[h.length-1];
+        for(let i=0;i<h.length-1;i++){
+            cc[3*[i+1]-1][4*(i+1)]=-1;
+            cc[3*[i+1]-1][4*i]=Math.pow(h[i],0);
+            cc[3*[i+1]-1][4*i+1]=Math.pow(h[i],1);
+            cc[3*[i+1]-1][4*i+2]=Math.pow(h[i],2);
+            cc[3*[i+1]-1][4*i+3]=Math.pow(h[i],3);
+            cc[3*[i+1]][4*(i+1)+1]=-1;
+            cc[3*[i+1]][4*i+1]=Math.pow(h[i],0);
+            cc[3*[i+1]][4*i+2]=2*Math.pow(h[i],1);
+            cc[3*[i+1]][4*i+3]=3*Math.pow(h[i],2);
+            cc[3*[i+1]+1][4*(i+1)+2]=-2;
+            cc[3*[i+1]+1][4*i+2]=2*Math.pow(h[i],0);
+            cc[3*[i+1]+1][4*i+3]=6*Math.pow(h[i],1);
+        }
+    }
+    let dL=new Array(7*h.length-endsdontloop).fill(0).map(v=>new Array(7*h.length-endsdontloop).fill(0));
+    for(let i=0;i<4*h.length;i++){
+        if(i%4===0){
+            dL[i][i]=2*lambda;
+        }else if(i%4===2){
+            dL[i][i]=(1-lambda)*8*h[Math.floor(i/4)];
+            dL[i][i+1]=(1-lambda)*12*Math.pow(h[Math.floor(i/4)],2);
+        }else if(i%4==3){
+            dL[i][i-1]=(1-lambda)*12*Math.pow(h[Math.floor(i/4)],2);
+            dL[i][i]=(1-lambda)*24*Math.pow(h[Math.floor(i/4)],3);
+        }
+        for(let ii=0;ii<cc.length;ii++){
+            dL[i][4*h.length+ii]=cc[ii][i];
+        }
+    }
+    for(let i=0;i<cc.length;i++){
+        for(let ii=0;ii<4*h.length;ii++){
+            dL[i+4*h.length][ii]=cc[i][ii];
+        }
+    }
+    let rhs=new Array(7*h.length-endsdontloop).fill(0).map(v=>[0]);
+    for(let i=0;i<h.length;i++){
+        rhs[4*i][0]=lambda*2*y[i];
+    }
+    if(y[0]!==y[y.length-1]){
+        rhs[4*h.length-4][0]+=2*lambda*Math.pow(h[h.length-1],0)*y[y.length-1];
+        rhs[4*h.length-3][0]+=2*lambda*Math.pow(h[h.length-1],1)*y[y.length-1];
+        rhs[4*h.length-2][0]+=2*lambda*Math.pow(h[h.length-1],2)*y[y.length-1];
+        rhs[4*h.length-1][0]+=2*lambda*Math.pow(h[h.length-1],3)*y[y.length-1];
+        for(let i=0;i<4;i++){
+            for(let ii=0;ii<4;ii++){
+                dL[4*h.length-4+i][4*h.length-4+ii]+=2*lambda*Math.pow(h[h.length-1],i)*Math.pow(h[h.length-1],ii);
+            }
+        }
+    }
+    return mtimes(inv(dL),rhs).map(v=>v[0]);
+}
+function evalsspline(t,xi,coef){
+    let tisarr=true;
+    if(!Array.isArray(t)){
+        tisarr=false;
+        t=[t];
+    }
+    let y=[];
+    for(let i=0;i<t.length;i++){
+        let c=0;
+        for(let ii=xi.length-2;ii>=0;ii--){
+            if(xi[ii]<=t[i]){
+                c=ii;
+                break
+            }
+        }
+        let h=t[i]-xi[c];
+        y.push(coef[4*c]+coef[4*c+1]*h+coef[4*c+2]*h*h+coef[4*c+3]*h*h*h);
+    }
+    if(!tisarr){
+        y=y[0];
+    }
+    return y;
+}
+function normalsspline(t,xi,coefx,coefy){
+    if(!Array.isArray(t)){
+        t=[t];
+    }
+    let n=[];
+    for(let i=0;i<t.length;i++){
+        let c=0;
+        for(let ii=xi.length-2;ii>=0;ii--){
+            if(xi[ii]<=t[i]){
+                c=ii;
+                break
+            }
+        }
+        let h=t[i]-xi[c];
+        let N=[-(coefy[4*c+1]+2*coefy[4*c+2]*h+3*coefy[4*c+3]*h*h),coefx[4*c+1]+2*coefx[4*c+2]*h+3*coefx[4*c+3]*h*h];
+        let Nnorm=Math.sqrt(N[0]*N[0]+N[1]*N[1]);
+        N[0]/=Nnorm;
+        N[1]/=Nnorm;
+        n.push(N);
+    }
+    return n;
+}
+function eye(n){
+    let I=[];
+    for(var i=0;i<n;i++){
+        I[i]=[];
+        for(var j=0;j<n;j++){
+        if(i==j){
+            I[i][j]=1;
+        }else{
+            I[i][j]=0;
+        }
+    }
+}
+return I;
+}
+function mtimes(a,b){
+    var m=a.length;
+    var n=a[0].length;
+    var p=b.length;
+    var q=b[0].length;
+    if(n!=p){
+        throw m+" by "+n+" matrix can not be multiplied with "+p+" by "+q+" matrix.";
+    }
+    var c=new Array(m);
+    for(var i=0;i<m;i++){
+        c[i]=new Array(q).fill(0);
+        for(var j=0;j<q;j++){
+            for (var k=0;k<n;k++){
+                c[i][j]+=a[i][k]*b[k][j];
+            }
+        }
+    }
+    return c;
+}
+function inv(A){
+    let n=A.length;
+    let I=eye(n);
+    let M=[];
+    for(let i=0;i<n;i++){
+        M[i]=[...[A[i],I[i]].flat()];
+    }
+    for(let i=0;i<n;i++){
+        let t=M.map((v)=>v[i]).slice(i);
+        let iii=Array.from(t.keys()).sort((a,b)=>Math.abs(t[b])-Math.abs(t[a]));
+        let tM=[];
+        for(let ii=i;ii<n;ii++){
+            tM[ii]=M[iii[ii-i]+i];
+        }
+        for(let ii=i;ii<n;ii++){
+            M[ii]=tM[ii];
+        }
+        if(M[i][i]!==0){
+            let inv=1/M[i][i];
+            for(let ii=0;ii<2*n;ii++){
+                M[i][ii]=M[i][ii]*inv;
+            }
+        }
+        for(let ii=i+1;ii<n;ii++){
+            if(M[ii][i]===0){
+                continue
+            }
+            for(let iii=2*n-1;iii>=i;iii--){
+                M[ii][iii]=M[ii][iii]-M[ii][i]*M[i][iii];
+            }
+        }
+    }
+    for(let i=n-1;i>=0;i--){
+        for(let ii=i-1;ii>=0;ii--){
+            for(let iii=2*n-1;iii>=i;iii--){
+                M[ii][iii]=M[ii][iii]-M[ii][i]*M[i][iii];
+            }
+        }
+    }
+    let N=[];
+    for(let i=0;i<n;i++){
+        for(let ii=0;ii<n;ii++){
+            if(ii===0){
+                N[i]=[];
+            }
+            N[i][ii]=M[i][ii+n];
+        }
+    }
+    return N;
+}
+function transpose(A){return A[0].map((col,i)=>A.map(row=>row[i]));}
+function inpolygon(x,y,xb,yb){
+    if(!(xb[0]===xb[xb.length-1]&&yb[0]===yb[yb.length-1])){
+        xb.push(xb[0]);
+        yb.push(yb[0]);
+    }
+    let arrofpoints=true;
+    if(!Array.isArray(x)){
+        arrofpoints=false;
+        x=[x];
+        y=[y];
+    }
+    let crosscount=new Array(x.length).fill(0);
+    for(let i=0;i<xb.length-1;i++){
+        for(let ii=0;ii<x.length;ii++){
+            if(Math.sign(yb[i]-y[ii])!==Math.sign(yb[i+1]-y[ii])&&xb[i]>x[ii]||xb[i+1]>x[ii]){
+                let M=[[xb[i+1]-xb[i],-1],[yb[i+1]-yb[i],0]];
+                let b=[[x[ii]-xb[i]],[y[ii]-yb[i]]];
+                let st=mtimes(inv(M),b);
+                let dot=Math.abs((xb[i+1]-xb[i])/Math.sqrt(Math.pow(xb[i+1]-xb[i],2)+Math.pow(yb[i+1]-yb[i],2)));
+                if(dot!=1&&st[1]>0&&0<=st[0]&&st[0]<1){
+                    crosscount[ii]++;
+                }
+            }
+        }
+    }
+    let inp=crosscount.map(v=>v%2===1);
+    if(!arrofpoints){
+        inp=inp[0];
+    }
+    return inp;
+}
+function convexhull3d(x,y,z){
+    let N=x.length;
+    const d=3;
+    let minxi=0;
+    let minyi=0;
+    let minzi=0;
+    let maxxi=0;
+    let maxyi=0;
+    let maxzi=0;
+    for(let i=1;i<N;i++){
+        if(x[i]<x[minxi]){
+            minxi=i;
+        }
+        if(y[i]<y[minyi]){
+            minyi=i;
+        }
+        if(z[i]<z[minzi]){
+            minzi=i;
+        }
+        if(x[i]>x[maxxi]){
+            maxxi=i;
+        }
+        if(y[i]>y[maxyi]){
+            maxyi=i;
+        }
+        if(z[i]>z[maxzi]){
+            maxzi=i;
+        }
+    }
+    var face1=[...new Set([minxi,minyi,minzi,maxxi,maxyi,maxzi])];
+    while(face1.length>d){
+        face1.pop();
+    }
+    var v1=[x[face1[1]]-x[face1[0]],y[face1[1]]-y[face1[0]],z[face1[1]]-z[face1[0]]];
+    var v2=[x[face1[2]]-x[face1[0]],y[face1[2]]-y[face1[0]],z[face1[2]]-z[face1[0]]];
+    var n=[v1[1]*v2[2]-v1[2]*v2[1],-(v1[0]*v2[2]-v1[2]*v2[0]),v1[0]*v2[1]-v1[1]*v2[0]];
+    var fp=0;
+    var maxfp=Number.NEGATIVE_INFINITY;
+    for(var i=0;i<N;i++){
+        var mfp=Math.abs((x[i]-x[face1[0]])*n[0]+(y[i]-y[face1[0]])*n[1]+(z[i]-z[face1[0]])*n[2]);
+        if(mfp>maxfp){
+            maxfp=mfp;
+            fp=i;
+        }
+    }
+    var face2=[fp,face1[1],face1[2]];
+    var face3=[face1[0],fp,face1[2]];
+    var face4=[face1[0],face1[1],fp];
+    var h=[face1,face2,face3,face4];
+
+    for(var j=0;j<N;j++){
+        var meanxy=[0,0,0];
+        for(var i=0;i<h.length;i++){
+            meanxy=[meanxy[0]+x[h[i][0]]+x[h[i][1]]+x[h[i][2]],meanxy[1]+y[h[i][0]]+y[h[i][1]]+y[h[i][2]],meanxy[2]+z[h[i][0]]+z[h[i][1]]+z[h[i][2]]];
+        }
+        meanxy=[meanxy[0]/(h.length*3),meanxy[1]/(h.length*3),meanxy[2]/(h.length*3)];
+        var n=[];
+        var a=[];
+        var md=[];
+        var mdi=[];
+        var cf=Number.NEGATIVE_INFINITY;
+        var cfi=0;
+        for(var i=0;i<h.length;i++){
+            var v1=[x[h[i][1]]-x[h[i][0]],y[h[i][1]]-y[h[i][0]],z[h[i][1]]-z[h[i][0]]];
+            var v2=[x[h[i][2]]-x[h[i][0]],y[h[i][2]]-y[h[i][0]],z[h[i][2]]-z[h[i][0]]];
+            n[i]=[v1[1]*v2[2]-v1[2]*v2[1],-(v1[0]*v2[2]-v1[2]*v2[0]),v1[0]*v2[1]-v1[1]*v2[0]];
+            var norm=Math.sqrt((n[i][0]**2+n[i][1]**2+n[i][2]**2));
+            n[i]=[n[i][0]/norm,n[i][1]/norm,n[i][2]/norm];
+            a[i]=[x[h[i][0]],y[h[i][0]],z[h[i][0]]];
+            if(((meanxy[0]-a[i][0])*n[i][0]+(meanxy[1]-a[i][1])*n[i][1]+(meanxy[2]-a[i][2])*n[i][2])>0){
+                n[i]=[-n[i][0],-n[i][1],-n[i][2]];
+            }
+            md[i]=Number.NEGATIVE_INFINITY;
+            for(var k=0;k<x.length;k++){
+                var mdt=n[i][0]*(x[k]-a[i][0])+n[i][1]*(y[k]-a[i][1])+n[i][2]*(z[k]-a[i][2]);
+                if (mdt>md[i]){
+                    md[i]=mdt;
+                    mdi[i]=k;
+                }
+            }
+            if(md[i]>cf){
+                cf=md[i];
+                cfi=i;
+            }
+        }
+        if(cf>1e-12){
+            var fromeyev=[];
+            for(var i=0;i<x.length;i++){
+                fromeyev[i]=[x[i]-x[mdi[cfi]],y[i]-y[mdi[cfi]],z[i]-z[mdi[cfi]]];
+            }
+            var remfaces=[];
+            for(var i=0;i<h.length;i++){
+                if((fromeyev[h[i][0]][0]*n[i][0]+fromeyev[h[i][0]][1]*n[i][1]+fromeyev[h[i][0]][2]*n[i][2])<0&&(fromeyev[h[i][1]][0]*n[i][0]+fromeyev[h[i][1]][1]*n[i][1]+fromeyev[h[i][1]][2]*n[i][2])<0&&(fromeyev[h[i][2]][0]*n[i][0]+fromeyev[h[i][2]][1]*n[i][1]+fromeyev[h[i][2]][2]*n[i][2])<0){
+                   remfaces.push(i);
+                }
+            }
+            var seefaces=[];
+            var newfaces=[];
+            for(var i=0;i<remfaces.length;i++){
+                seefaces[i]=h[remfaces[i]].slice();
+                newfaces[3*i+0]=seefaces[i].slice();
+                newfaces[3*i+1]=seefaces[i].slice();
+                newfaces[3*i+2]=seefaces[i].slice();
+                newfaces[3*i+0][0]=mdi[cfi];
+                newfaces[3*i+1][1]=mdi[cfi];
+                newfaces[3*i+2][2]=mdi[cfi];
+                newfaces[3*i+0].sort(function(a, b){return a-b});
+                newfaces[3*i+1].sort(function(a, b){return a-b});
+                newfaces[3*i+2].sort(function(a, b){return a-b});
+            }
+            newfaces.sort(function(a,b){for(var i=0;i<a.length;i++){if(a[i]-b[i]!=0){return a[i]-b[i];}}return 0;});
+            var shouldrem=[];
+            for(var i=1;i<newfaces.length;i++){
+                if(newfaces[i][0]==newfaces[i-1][0]&&newfaces[i][1]==newfaces[i-1][1]&&newfaces[i][2]==newfaces[i-1][2]){
+                    shouldrem.push(i-1);
+                    shouldrem.push(i);
+                }
+            }
+            for(var i=remfaces.length-1;i>=0;i--){
+                h.splice(remfaces[i],1);
+            }
+            for(var i=0;i<newfaces.length;i++){
+                if(!shouldrem.includes(i)){
+                    h.push(newfaces[i]);
+                }
+            }
+        }else{
+            break
+        }
+    }
+    return h;
+}
+function voronoi(x,y){
+    let z=x.map((x,i)=>x**2+y[i]**2);
+    let h=convexhull3d(x,y,z);
+	let m=[0,0,0];
+	for(var i=0;i<x.length;i++){
+		m[0]+=x[i];
+		m[1]+=y[i];
+		m[2]+=z[i];
+	}
+    m[0]/=x.length;
+    m[1]/=y.length;
+    m[2]/=z.length;
+    let N=[];
+    let A=[];
+	for(var i=0;i<h.length;i++){
+		var v1=[x[h[i][1]]-x[h[i][0]],y[h[i][1]]-y[h[i][0]],z[h[i][1]]-z[h[i][0]]];
+		var v2=[x[h[i][2]]-x[h[i][0]],y[h[i][2]]-y[h[i][0]],z[h[i][2]]-z[h[i][0]]];
+		var area=Math.abs(v1[0]*v2[1]-v1[1]*v2[0]);
+		var n=[v1[1]*v2[2]-v1[2]*v2[1],-(v1[0]*v2[2]-v1[2]*v2[0]),v1[0]*v2[1]-v1[1]*v2[0]];
+		var nn=Math.sqrt(n[0]**2+n[1]**2+n[2]**2);
+        n[0]/=nn;
+        n[1]/=nn;
+        n[2]/=nn;
+        N[i]=n;
+        A[i]=area;
+        if(((m[0]-x[h[i][0]])*n[0]+(m[1]-y[h[i][0]])*n[1]+(m[2]-z[h[i][0]])*n[2])<0){
+            n[0]*=-1;
+            n[1]*=-1;
+            n[2]*=-1;
+        }
+	}
+    var vx=[];
+    var vy=[];
+    var tri=[];
+    var ii=0;
+    var meanx=0;
+    var meany=0;
+    for(var i=0;i<h.length;i++){
+        if(!(N[i][2]<1e-14||A[i]<1e-14)){
+            tri[ii]=h[i];
+            var C=mtimes(inv([[x[h[i][0]],y[h[i][0]],1],[x[h[i][1]],y[h[i][1]],1],[x[h[i][2]],y[h[i][2]],1]]),[[-(x[h[i][0]]**2)-(y[h[i][0]]**2)],[-(x[h[i][1]]**2)-(y[h[i][1]]**2)],[-(x[h[i][2]]**2)-(y[h[i][2]]**2)]]);
+            vx[ii]=C[0][0]/(-2);
+            vy[ii]=C[1][0]/-2;
+            meanx+=x[h[i][0]]+x[h[i][1]]+x[h[i][2]];
+            meany+=y[h[i][0]]+y[h[i][1]]+y[h[i][2]];
+            ii++
+        }
+    }
+    meanx/=3*ii;
+    meany/=3*ii;
+    var se=[];
+    var ve=[];
+    for(var k=0;k<tri.length;k++){
+        var joi=[0,1,2];
+        for(var i=0;i<=2;i++){
+            var found=false;
+            for(var j=0;j<tri.length;j++){
+                if(j!=k){
+                    if((tri[k][joi[0]]==tri[j][0]||tri[k][joi[0]]==tri[j][1]||tri[k][joi[0]]==tri[j][2])&&(tri[k][joi[1]]==tri[j][0]||tri[k][joi[1]]==tri[j][1]||tri[k][joi[1]]==tri[j][2])){
+                        found=true;
+                        var ind=k*3+i;
+                        se[ind]=[tri[k,joi[0]],tri[k,joi[1]]];
+                        ve[ind]=[k,j];
+                        break
+                    }
+                }
+            }
+            if(!found){
+                var ind=k*3+i;
+                se[ind]=se[ind]=[tri[k][joi[0]],tri[k][joi[1]]];
+                ve[ind]=[k,vx.length];
+                var ex=x[se[ind][1]]-x[se[ind][0]];
+                var ey=y[se[ind][1]]-y[se[ind][0]];
+                var normexy=Math.sqrt(ex**2+ey**2);
+                var nx=-ey/normexy;
+                var ny=ex/normexy;
+                if((meanx-x[se[ind][0]])*nx+(meany-y[se[ind][0]])*ny>0){
+                    nx*=-1;
+                    ny*=-1;
+                }
+                vx.push(vx[k]+1000*nx);
+                vy.push(vy[k]+1000*ny);
+            }
+            joi.unshift(joi.pop());
+        }
+    }
+    var vvx=[];
+    var vvy=[];
+    let idxs=new Set();
+    for(var i=0;i<ve.length;i++){
+        let mini=Math.min(ve[i][0],ve[i][1]);
+        let maxi=Math.max(ve[i][0],ve[i][1]);
+        idxs.add(JSON.stringify([mini,maxi]));
+    }
+    for(let i of idxs){
+        let i01=JSON.parse(i);
+        vvx.push([vx[i01[0]],vx[i01[1]]]);
+        vvy.push([vy[i01[0]],vy[i01[1]]]);
+    }
+    let vp={"x":vvx,"y":vvy};
+    return vp;
+}
+function debounce(func, waitTime) {
+    let timeoutId;
+    return function(...args) {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+        func.apply(this, args);
+        }, waitTime);
+    };
+}
+function getskel(data){
+    if(backgroundworker){
+        backgroundworker.terminate();
+        backgroundworker=null;
+    }
+    let blob = new Blob(["(" + getletterskel.toString() + ")()"], {type: "text/javascript"});
+    backgroundworker = new Worker(window.URL.createObjectURL(blob));
+    backgroundworker.onerror=(e)=>{
+        console.log('Error detected in Worker:');
+        console.log(`Message: ${e.message}`);
+        console.log(`File: ${e.filename}`);
+        console.log(`Line: ${e.lineno}, Column: ${e.colno}`);
+    }
+    backgroundworker.onmessage = async (e) => {
+        if(e.data.status==='done'){
+            if(e.data.typed){
+            }else if(e.data.width===processbox[2]&&e.data.height===processbox[3]){
+                letterskels=e.data.letterskel;
+                let im=ctxphoto.createImageData(e.data.width,e.data.height);
+                im.data.set(new Uint8ClampedArray(e.data.image));
+                ctxphoto.putImageData(im,processbox[0]-viewbox[0],processbox[1]-viewbox[1]);
+                ctxphoto.lineWidth=Math.ceil(boxlinewidth/5);
+                for(let i=0;i<letterskels.length;i++){
+                    let sec=letterskels[i];
+                    for(let i=0;i<sec.length;i++){
+                        ctxphoto.beginPath();
+                        ctxphoto.strokeStyle=`hsl(${i/sec.length*360}, 100%, 50%)`;
+                        ctxphoto.moveTo(sec[i][0][0]+processbox[0]-viewbox[0],sec[i][0][1]+processbox[1]-viewbox[1]);
+                        for(let ii=1;ii<sec[i].length;ii++){
+                            ctxphoto.lineTo(sec[i][ii][0]+processbox[0]-viewbox[0],sec[i][ii][1]+processbox[1]-viewbox[1]);
+                        }
+                        ctxphoto.stroke();
+                    }
+                    // window.scrollTo(xmin,ymin);
+                }
+            }
+        }else if(e.data.status==="update"){
+            if(e.data.width===processbox[2]&&e.data.height===processbox[3]){
+                let im=ctxphoto.createImageData(e.data.width,e.data.height);
+                im.data.set(new Uint8ClampedArray(e.data.image));
+                ctxphoto.putImageData(im,processbox[0]-viewbox[0],processbox[1]-viewbox[1]);
+            }
+        }
+    };
+    backgroundworker.postMessage(data,[data.image.buffer]);
+}
+function getletterskel(){
+    function linspace(start,end,points=100){
+        let range=end-start;
+        let x=[];
+        let stepsize=range/(points-1);
+        for(let i=0;i<points;i++){
+            x[i]=start+i*stepsize;
+        }
+        return x;
+    }
+    function polyarea(x,y){
+        let A=0;
+        for(let i=0;i<x.length-1;i++){
+            A+=x[i]*y[i+1]-x[i+1]*y[i];
+        }
+        let i=x.length-1;
+        A+=x[i]*y[0]-x[0]*y[i];
+        A=A/2;
+        return Math.abs(A)
+    }
+    function xy2i(x,y,width,height,data){
+        if(x>=width){
+            error("x>width, "+x+">"+width);
+        }
+        if(y>=height){
+            error("y>height, "+y+">"+height);
+        }
+        if(width*height===data.length){
+            return width*y+x;
+        }else if(width*height*4===data.length){
+            return (width*y+x)*4;
+        }else{
+            error('width and/or height of image incorrect')
+        }
+    }
+    function i2xy(i,width,height,data){
+        if(width*height===data.length){
+            if(i>=width*height||i<0){
+                error("index outside image");
+            }
+            return [i%width,Math.floor(i/width)];
+        }else if(width*height*4===data.length){
+            return [i/4%(width),Math.floor(i/(width*4))];
+        }else{
+            error('width and/or height of image incorrect')
+        }
+    }
+    function listconnected(i,width,height,data){
+        let q=[i];
+        let connected=[];
+        let checked=[i];
+        let toadd=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+        while(q.length>0){
+            ci=q.shift();
+            if(data[ci]===data[i]){
+                connected.push(ci);
+                let xy=i2xy(ci,width,height,data);
+                for(let ii=0;ii<toadd.length;ii++){
+                    let newx=xy[0]+toadd[ii][0];
+                    let newy=xy[1]+toadd[ii][1];
+                    if(newx>=0&&newx<width&&newy>=0&&newy<height){
+                        let newi=xy2i(newx,newy,width,height,data);
+                        if(!checked.includes(newi)){
+                            q.push(newi);
+                            checked.push(newi);
+                        }
+                    }
+                }
+            }
+        }
+        return connected;
+    }
+    function letterskeletonmorphology(letter){
+        let x=letter.map(v=>v[0]);
+        let y=letter.map(v=>v[1]);
+        let xmin=Math.min(...x);
+        let xmax=Math.max(...x);
+        let ymin=Math.min(...y);
+        let ymax=Math.max(...y);
+        let isletter=[];
+        let z=[];
+        let zs=[];
+        let rows=xmax-xmin+5;
+        let columns=ymax-ymin+5;
+        let zmax=0;
+        for(let i=0;i<rows;i++){
+            isletter.push(Array(columns).fill(false));
+            z.push(Array(columns).fill(0));
+            zs.push(Array(columns).fill(false));
+        }
+        for(let i=0;i<letter.length;i++){
+            isletter[letter[i][0]-xmin+2][letter[i][1]-ymin+2]=true;
+            zs[letter[i][0]-xmin+2][letter[i][1]-ymin+2]=true;
+        }
+        // dist from edge
+        for(let i=0;i<rows;i++){
+            for(let ii=0;ii<columns;ii++){
+                if(isletter[i][ii]){
+                    z[i][ii]=Math.min(z[i][ii-1],z[i-1][ii])+1;
+                }
+            }
+        }
+        for(let i=rows-1;i>=0;i--){
+            for(let ii=columns-1;ii>=0;ii--){
+                if(isletter[i][ii]){
+                    z[i][ii]=Math.min(Math.min(z[i][ii+1],z[i+1][ii])+1,z[i][ii]);
+                    if(z[i][ii]>zmax){
+                        zmax=z[i][ii];
+                    }
+                }
+            }
+        }
+        //find skel points by removing from edge
+        let se1=[0,0,0,-1,1,-1,1,1,1];
+        let se2=[-1,0,0,1,1,0,-1,1,-1];
+        function rot90(a){
+            return [a[2],a[5],a[8],a[1],a[4],a[7],a[0],a[3],a[6]];
+        }
+        let changed=true;
+        while(changed){
+            changed=false;
+            let zsold=zs.map(v=>[...v]);
+            for(let i=rows-1;i>=0;i--){
+                for(let ii=columns-1;ii>=0;ii--){
+                    if(zs[i][ii]){
+                        for(let iii=0;iii<4;iii++){
+                            if((zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==se1[idx]||se1[idx]===-1)||zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==se2[idx]||se2[idx]===-1))
+                            &&(zsold.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==se1[idx]||se1[idx]===-1)||zsold.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==se2[idx]||se2[idx]===-1))){
+                                changed=true;
+                                zs[i][ii]=false;
+                            }
+                            se1=rot90(se1);
+                            se2=rot90(se2);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // {   let skelxy=[];
+        //     for(let i=2;i<rows-2;i++){
+        //         for(let ii=2;ii<columns-2;ii++){
+        //             if(zs[i][ii]){
+        //                 skelxy.push([i,ii]);
+        //             }
+        //         }
+        //     }
+        //     debugger;}
+
+        // //remove unneeded
+        let prevnpoints=-1;
+        while(true){
+            let npoints=0;
+            for(let i=2;i<rows-2;i++){
+                for(let ii=2;ii<columns-2;ii++){
+                    if(zs[i][ii]){
+                        let block4=[0,-1,-1,-1,1,1,-1,1,1];
+                        let tinyspur1=[1,0,0,1,1,0,0,0,0];
+                        let tinyspur2=[0,0,0,1,1,0,1,0,0];
+                        let T=[0,1,0,1,1,1,-1,0,-1];
+                        for(let iii=0;iii<4;iii++){
+                            if(zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==block4[idx]||block4[idx]===-1)
+                            ||zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==tinyspur1[idx])
+                            ||zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==tinyspur2[idx])
+                            ||zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==T[idx]||T[idx]===-1)
+                            ){
+                                zs[i][ii]=false;
+                            }
+                            block4=rot90(block4);
+                            tinyspur1=rot90(tinyspur1);
+                            tinyspur2=rot90(tinyspur2);
+                            T=rot90(T);
+                        }
+                    }
+                    if(zs[i][ii]){
+                        npoints++;
+                    }
+                }
+            }
+            if(prevnpoints===npoints){
+                break
+            }else{
+                prevnpoints=npoints;
+                // console.log(npoints);
+            }
+        }
+        //extract ends and intersections
+        skelxy=[];
+        let intersectloc=[];
+        let endloc=[];
+        for(let i=2;i<rows-2;i++){
+            for(let ii=2;ii<columns-2;ii++){
+                if(zs[i][ii]){
+                    // skelxy.push([i+xmin-2,ii+ymin-2]);
+                    skelxy.push([i,ii]);
+                    let isintersect=false;
+                    if(zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().reduce((pv,cv)=>pv+cv,0)>3){
+                        if(zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==[0,1,0,1,1,1,0,1,0][idx])
+                        ||zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==[1,0,1,0,1,0,1,0,1][idx])){
+                            isintersect=true;
+                        }
+                        let h=[0,0,0,1,1,1,0,1,0];
+                        let hd=[0,0,1,1,1,0,0,1,0];
+                        let d=[0,0,1,0,1,0,1,0,1];
+                        let t=[1,0,1,0,1,0,0,1,0];
+                        for(let iii=0;iii<4;iii++){
+                            if(zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==h[idx])
+                            ||zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==hd[idx])
+                            ||zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==d[idx])
+                            ||zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().every((v,idx)=>v==t[idx])
+                            ){
+                                isintersect=true;
+                            }
+                            h=rot90(h);
+                            hd=rot90(hd);
+                            d=rot90(d);
+                            t=rot90(t);
+                        }
+                    }
+                    if (isintersect){
+                        intersectloc.push([i,ii]);
+                    }else if(zs.slice(i-1,i+2).map(v=>v.slice(ii-1,ii+2)).flat().reduce((pv,cv)=>pv+cv,0)<=2){
+                        endloc.push([i,ii]);
+                    }
+                }
+            }
+        }
+        // debugger
+        if(intersectloc.length===0&&endloc.length===0){
+            intersectloc.push(skelxy[0]);
+        }
+        // debugger
+        //extract path sections
+        let cp=0;
+        let sec=[];
+        let posdirs=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+        for(i=0;i<intersectloc.length+endloc.length;i++){
+            let cxy;
+            if(i<intersectloc.length){
+                cxy=intersectloc[i];
+            }else{
+                cxy=endloc[i-intersectloc.length];
+                if(!zs[cxy[0]][cxy[1]]){
+                    continue
+                }
+                zs[cxy[0]][cxy[1]]=false;
+            }
+            for(let ii=0;ii<posdirs.length;ii++){
+                let np=[cxy[0]+posdirs[ii][0],cxy[1]+posdirs[ii][1]];
+                if(zs[np[0]][np[1]]){
+                    sec[cp]=[cxy,np];
+                    zs[np[0]][np[1]]=false;
+                    while(!(intersectloc.some(v=>v[0]===sec[cp][sec[cp].length-1][0]&&v[1]===sec[cp][sec[cp].length-1][1])||endloc.some(v=>v[0]===sec[cp][sec[cp].length-1][0]&&v[1]===sec[cp][sec[cp].length-1][1]))){
+                        let stepped=false;
+                        let dist2intersect=intersectloc.map(v=>(v[0]-sec[cp][sec[cp].length-1][0])**2+(v[1]-sec[cp][sec[cp].length-1][1])**2);
+                        let mindi=-1;
+                        let mindist=Number.POSITIVE_INFINITY;
+                        for(let iii=0;iii<dist2intersect.length;iii++){
+                            if(dist2intersect[iii]<mindist&&!sec[cp][sec[cp].length-2].every((v,idx)=>v===intersectloc[iii][idx])){
+                                mindist=dist2intersect[iii];
+                                mindi=iii;
+                            }
+                        }
+                        if(mindist<3){
+                            stepped=true;
+                            sec[cp].push(intersectloc[mindi]);
+                            break
+                        }
+                        let prevdir=[sec[cp][sec[cp].length-1][0]-sec[cp][sec[cp].length-2][0],sec[cp][sec[cp].length-1][1]-sec[cp][sec[cp].length-2][1]]
+                        let pd=posdirs.toSorted((a,b)=>(a[0]-prevdir[0])**2+(a[1]-prevdir[1])**2-((b[0]-prevdir[0])**2+(b[1]-prevdir[1])**2));
+                        for(let iii=0;iii<pd.length;iii++){
+                            let np=sec[cp][sec[cp].length-1].map((v,idx)=>v+pd[iii][idx]);
+                            if(np.every((v,idx)=>v===sec[cp][sec[cp].length-2][idx])){
+                                continue
+                            }
+                            if(zs[np[0]][np[1]]){
+                                stepped=true;
+                                sec[cp].push(np);
+                                if(!intersectloc.some(v=>v[0]===sec[cp][sec[cp].length-1][0]&&v[1]===sec[cp][sec[cp].length-1][1])){
+                                    zs[np[0]][np[1]]=false;
+                                }
+                                break
+                            }
+                        }
+                        if(!stepped){
+                            // endloc.push(sec[cp][sec[cp].length-1])
+                            break
+                        }
+                    }
+                    cp++;
+                }
+            }
+        }
+        // debugger;
+        //remove high slope and very short paths
+        for(let i=sec.length-1;i>=0;i--){
+            let s=sec[i][0];
+            let e=sec[i][sec[i].length-1];
+            let sh=z[s[0]][s[1]];
+            let eh=z[e[0]][e[1]];
+            let slope=Math.abs(sh-eh)/(sec[i].length-1);
+            if((endloc.some(v=>v[0]===s[0]&&v[1]===s[1])||endloc.some(v=>v[0]===e[0]&&v[1]===e[1]))&&(slope>=.75||sec[i].length<=4)){
+                sec.splice(i,1);
+            }
+        }
+        if(sec.length===0){
+            sec.push([[Math.round(z.length/2-z.length/10),Math.round(z[0].length/2-z[0].length/10)],[Math.round(z.length/2+z.length/10),Math.round(z[0].length/2+z[0].length/10)]]);
+        }
+        //join gaps between sections
+        let toremove=new Set();
+        let toadd=[];
+        let seclength=sec.length;
+        for(let i=seclength-1;i>=0;i--){
+            let s=sec[i][0];
+            let e=sec[i][sec[i].length-1];
+            let se=s.map((v,i)=>v-e[i]);
+            let senorm=(se[0]**2+se[1]**2)**.5;
+            let mindiststart=Number.POSITIVE_INFINITY;
+            let mindistend=Number.POSITIVE_INFINITY;
+            let mindiststarti;
+            let mindistendi;
+            for(let ii=seclength-1;ii>=0;ii--){
+                if(ii===i){
+                    continue
+                }
+                for(let iii=0;iii<sec[ii].length;iii++){
+                    let so=sec[ii][iii];
+                    let sos=so.map((v,i)=>v-s[i]);
+                    let sosn=(sos[0]**2+sos[1]**2)**.5;
+                    if(sosn<mindiststart&&(sosn===0||se.map((v,i)=>v*sos[i]).reduce((pv,cv)=>pv+cv,0)/(sosn*senorm)>0&&checkpathonridge(s,so,z))){
+                        mindiststart=sosn;
+                        mindiststarti=[ii,iii];
+                    }
+                    let soe=so.map((v,i)=>v-e[i]);
+                    let soen=(soe[0]**2+soe[1]**2)**.5;
+                    if(soen<mindistend&&(soen===0||se.map((v,i)=>-v*soe[i]).reduce((pv,cv)=>pv+cv,0)/(soen*senorm)>0&&checkpathonridge(e,so,z))){
+                        mindistend=soen;
+                        mindistendi=[ii,iii];
+                    }
+                }
+            }
+            if(mindiststart>0&&isFinite(mindiststart)){
+                sec.push([s,sec[mindiststarti[0]][mindiststarti[1]]]);
+                if(!(mindiststarti[1]===0||mindiststarti[1]===sec[mindiststarti[0]].length-1)){
+                    toremove.add(mindiststarti[0]);
+                    toadd.push(mindiststarti);
+                }
+            }
+            if(mindistend>0&&isFinite(mindistend)){
+                sec.push([e,sec[mindistendi[0]][mindistendi[1]]]);
+                if(!(mindistendi[1]===0||mindistendi[1]===sec[mindistendi[0]].length-1)){
+                    toremove.add(mindistendi[0]);
+                    toadd.push(mindistendi);
+                }
+            }
+        }
+        toadd=Array.from(toadd.reduce((map, item) => map.set(JSON.stringify(item), item), new Map()).values());
+        for(let i=0;i<toadd.length;i++){
+            for(let ii=toadd.length-1;ii>i;ii--){
+                if(toadd[i][0]===toadd[ii][0]){
+                    toadd[i].push(toadd[ii][1]);
+                    toadd.splice(ii,1);
+                }
+            }
+        }
+        for(let i=0;i<toadd.length;i++){
+            let secs=[...new Set(toadd[i].splice(1))];
+            secs.sort((a,b)=>a-b);
+            sec.push(sec[toadd[i][0]].slice(0,secs[0]+1));
+            for(let ii=0;ii<secs.length-1;ii++){
+                sec.push(sec[toadd[i][0]].slice(secs[ii],secs[ii+1]+1));
+            }
+            sec.push(sec[toadd[i][0]].slice(secs[secs.length-1]));
+        }
+        toremove=[...toremove];
+        toremove.sort((a,b)=>b-a);
+        for(let i=0;i<toremove.length;i++){
+            sec.splice(toremove[i],1);
+        }
+        
+        // join single path connections
+        // debugger
+        let lengthsec=sec.length;
+        while(true){
+            sec=removedupilicatedpath(sec,(xmax-xmin)*(ymax-ymin));
+            sec=joinpathsecif1option(sec);
+            if(sec.length===lengthsec){
+                break
+            }else{
+                lengthsec=sec.length;
+            }
+        }
+        // debugger
+        
+        //fix line extending from v point
+        let connections=numbconnections(sec);
+        for(let i=connections.length-1;i>=0;i--){
+            let tail,head;
+            if(connections[i][0]===0&&connections[i][1]===2){
+                tail=sec[i][sec[i].length-1];
+                head=sec[i][0];
+            }else if(connections[i][0]===2&&connections[i][1]===0){
+                tail=sec[i][0];
+                head=sec[i][sec[i].length-1];
+            }else{
+                continue
+            }
+            let csec=[];
+            let tailcsec=[];
+            for(let ii=0;ii<sec.length;ii++){
+                if(i===ii){
+                    continue
+                }
+                if(tail[0]===sec[ii][0][0]&&tail[1]===sec[ii][0][1]||tail[0]===sec[ii][sec[ii].length-1][0]&&tail[1]===sec[ii][sec[ii].length-1][1]){
+                    csec.push(ii);
+                    if(tail[0]===sec[ii][0][0]&&tail[1]===sec[ii][0][1]){
+                        tailcsec.push(sec[ii][sec[ii].length-1]);
+                    }else{
+                        tailcsec.push(sec[ii][0]);
+                    }
+                }
+            }
+            if(csec.length==2&&Math.abs(head[1]-tail[1])>.8*((head[0]-tail[0])**2+(head[1]-tail[1])**2)**.5){
+                let vc0=[tail[0]-tailcsec[0][0],tail[1]-tailcsec[0][1]];
+                let vc1=[tail[0]-tailcsec[1][0],tail[1]-tailcsec[1][1]];
+                let vn0=[head[0]-tailcsec[0][0],head[1]-tailcsec[0][1]];
+                let vn1=[head[0]-tailcsec[1][0],head[1]-tailcsec[1][1]];
+                let vc0norm=(vc0[0]**2+vc0[1]**2)**.5;
+                let vc1norm=(vc1[0]**2+vc1[1]**2)**.5;
+                let vn0norm=(vn0[0]**2+vn0[1]**2)**.5;
+                let vn1norm=(vn1[0]**2+vn1[1]**2)**.5;
+                let sd0=(vc0[0]*vn0[0]+vc0[1]*vn0[1])/(vc0norm*vn0norm);
+                let sd1=(vc1[0]*vn1[0]+vc1[1]*vn1[1])/(vc1norm*vn1norm);
+                let cvang=(vc0[0]*vc1[0]+vc0[1]*vc1[1])/(vc0norm*vc1norm);
+                let nvang=(vn0[0]*vn1[0]+vn0[1]*vn1[1])/(vn0norm*vn1norm);
+                if(sd0>.95&&sd1>.95&&cvang>0&&nvang>0&&nvang>cvang){
+                    let n1=[-vc0[1]/vc0norm,vc0[0]/vc0norm];
+                    let n2=[-vc1[1]/vc1norm,vc1[0]/vc1norm];
+                    if(Math.max(...sec[csec[0]].map(v=>Math.abs((v[0]-tail[0])*n1[0]+(v[1]-tail[1])*n1[1])/vc0norm),...sec[csec[1]].map(v=>Math.abs((v[0]-tail[0])*n2[0]+(v[1]-tail[1])*n2[1])/vc1norm))<.25){
+                        sec[csec[0]]=[tailcsec[0],[...head]];
+                        sec[csec[1]]=[tailcsec[1],[...head]];
+                        sec.splice(i,1);
+                        connections.splice(i,1);
+                    }
+                }
+            }
+        }
+        //find connected parts
+        let vert=[];
+        for(let i=0;i<sec.length;i++){
+            vert.push(sec[i][0]);
+            vert.push(sec[i][sec[i].length-1]);
+        }
+        for(let i=0;i<vert.length;i++){
+            for(let ii=vert.length-1;ii>i;ii--){
+                if(vert[i][0]===vert[ii][0]&&vert[i][1]===vert[ii][1]){
+                    vert.splice(ii,1);
+                }
+            }
+        }
+        let visited=new Array(vert.length).fill(false);
+        let components=[];
+        let q=new Set();
+        let componenti=-1;
+        while(visited.some(v=>v===false)){
+            if(q.size===0){
+                for(let i=0;i<visited.length;i++){
+                    if(!visited[i]){
+                        q.add(vert[i]);
+                        componenti++;
+                        components[componenti]=[];
+                        break
+                    }
+                }
+            }
+            let cv=[...q][0];
+            q.delete(cv);
+            let ci;
+            for(let i=0;i<vert.length;i++){
+                if(cv[0]===vert[i][0]&&cv[1]===vert[i][1]){
+                    visited[i]=true;
+                    components[componenti].push(i);
+                    ci=i;
+                    break
+                }
+            }
+            for(let i=0;i<sec.length;i++){
+                let av=undefined;
+                if(sec[i][0][0]===vert[ci][0]&&sec[i][0][1]===vert[ci][1]){
+                    av=sec[i][sec[i].length-1];
+                }else if(sec[i][sec[i].length-1][0]===vert[ci][0]&&sec[i][sec[i].length-1][1]===vert[ci][1]){
+                    av=sec[i][0];
+                }
+                if(av!==undefined){
+                    for(let ii=0;ii<vert.length;ii++){
+                        if(!visited[ii]&&av[0]===vert[ii][0]&&av[1]===vert[ii][1]){
+                            q.add(av);
+                        }
+                    }
+                }
+            }
+        }
+        //if more than one component - join to main, remove tiny or keep two objects
+        if(components.length>1){
+            let dsec=new Array(components.length);
+            for(let i=0;i<components.length;i++){
+                dsec[i]=new Set();
+                for(let ii=0;ii<components[i].length;ii++){
+                    for(let iii=0;iii<sec.length;iii++){
+                        if(vert[components[i][ii]][0]===sec[iii][0][0]&&vert[components[i][ii]][1]===sec[iii][0][1]||vert[components[i][ii]][0]===sec[iii][sec[iii].length-1][0]&&vert[components[i][ii]][1]===sec[iii][sec[iii].length-1][1]){
+                            dsec[i].add(sec[iii]);
+                        }
+                    }
+                }
+            }
+            let totallen=new Array(components.length).fill(0);
+            for(let i=0;i<components.length;i++){
+                dsec[i]=[...dsec[i]];
+                for(let ii=0;ii<dsec[i].length;ii++){
+                    for(let iii=0;iii<dsec[i][ii].length-1;iii++){
+                        totallen[i]+=((dsec[i][ii][iii+1][0]-dsec[i][ii][iii][0])**2+(dsec[i][ii][iii+1][1]-dsec[i][ii][iii][1])**2)**.5;
+                    }
+                }
+            }
+            let mainparti=totallen.reduce((pv,cv,ci,arr)=>cv>arr[pv]?ci:pv,0);
+            let xmp=dsec[mainparti].flat().map(v=>v[0]);
+            let ymp=dsec[mainparti].flat().map(v=>v[1]);
+            for(let i=0;i<components.length;i++){
+                if(i===mainparti){
+                    continue
+                }
+                let mindist=Number.POSITIVE_INFINITY;
+                let xystart=[];
+                let xyend=[];
+                let xstray=dsec[i].flat().map(v=>v[0]);
+                let ystray=dsec[i].flat().map(v=>v[1]);
+                for(let ii=0;ii<xmp.length;ii++){
+                    for(let iii=0;iii<xstray.length;iii++){
+                        let dist=((xstray[iii]-xmp[ii])**2+(ystray[iii]-ymp[ii])**2)**.5;
+                        if(dist<mindist){
+                            mindist=dist;
+                            xystart=[xmp[ii],ymp[ii]];
+                            xyend=[xstray[iii],ystray[iii]];
+                        }
+                    }
+                }
+                if(totallen[i]<totallen[mainparti]/7){
+                    for(let ii=0;ii<dsec[i].length;ii++){
+                        sec.splice(sec.indexOf(dsec[i][ii]),1);
+                    }
+                }else if(checkpathonridge(xystart,xyend,z)){
+                    sec.push([xystart,xyend]);
+                }
+            }
+        }
+        for(let i=0;i<sec.length;i++){
+            sec[i]=sec[i].map(v=>[v[0]+xmin-2,v[1]+ymin-2]);
+        }
+        ////////Plot letters
+        // for(let i=0;i<sec.length;i++){
+        //     ctxphoto.beginPath();
+        //     ctxphoto.strokeStyle=`hsl(${i/sec.length*360}, 100%, 50%)`;
+        //     ctxphoto.moveTo(sec[i][0][0],sec[i][0][1]);
+        //     for(let ii=1;ii<sec[i].length;ii++){
+        //         ctxphoto.lineTo(sec[i][ii][0],sec[i][ii][1]);
+        //     }
+        //     ctxphoto.stroke();
+        // }
+        // window.scrollTo(xmin,ymin);
+        // console.log("")
+
+        return sec;
+
+        function numbconnections(sec){
+            let connections=[];
+            for(let i=0;i<sec.length;i++){
+                connections.push([0,0]);
+                for(let ii=0;ii<sec.length;ii++){
+                    if(i===ii){
+                        continue
+                    }
+                    if(sec[i][0][0]===sec[ii][0][0]&&sec[i][0][1]===sec[ii][0][1]||sec[i][0][0]===sec[ii][sec[ii].length-1][0]&&sec[i][0][1]===sec[ii][sec[ii].length-1][1]){
+                        connections[i][0]++;
+                    }
+                    if(sec[i][sec[i].length-1][0]===sec[ii][0][0]&&sec[i][sec[i].length-1][1]===sec[ii][0][1]||sec[i][sec[i].length-1][0]===sec[ii][sec[ii].length-1][0]&&sec[i][sec[i].length-1][1]===sec[ii][sec[ii].length-1][1]){
+                        connections[i][1]++;
+                    }
+                }
+            }
+            return connections;
+        }
+        function checkpathonridge(s,e,distgrid){
+            let maxdistgrid=distgrid.flat().reduce((pv,cv)=>cv>pv?cv:pv,Number.NEGATIVE_INFINITY);
+            let distfromline=5;
+            let v=e.map((v,i)=>v-s[i]);
+            let vn=(v[0]**2+v[1]**2)**.5;
+            let cl=linspace(0,1,Math.ceil(vn)).slice(1,Math.ceil(vn)-1);
+            let vp=[-v[1]/vn,v[0]/vn];
+            let onrigde=true;
+            for(let i=0;i<cl.length;i++){
+                let c=[s[0]+v[0]*cl[i],s[1]+v[1]*cl[i]];
+                let c1=[c[0]+vp[0]*distfromline,c[1]+vp[1]*distfromline];
+                let c2=[c[0]-vp[0]*distfromline,c[1]-vp[1]*distfromline];
+                c1[0]=c1[0]<0?0:c1[0];
+                c1[1]=c1[1]<0?0:c1[1];
+                c2[0]=c2[0]<0?0:c2[0];
+                c2[1]=c2[1]<0?0:c2[1];
+                c1[0]=c1[0]>distgrid.length-1?distgrid.length-1:c1[0];
+                c1[1]=c1[1]>distgrid[0].length-1?distgrid[0].length-1:c1[1];
+                c2[0]=c2[0]>distgrid.length-1?distgrid.length-1:c2[0];
+                c2[1]=c2[1]>distgrid[0].length-1?distgrid[0].length-1:c2[1];
+                let hc=distgrid[Math.round(c[0])][Math.round(c[1])];
+                let hc1=distgrid[Math.round(c1[0])][Math.round(c1[1])];
+                let hc2=distgrid[Math.round(c2[0])][Math.round(c2[1])];
+                if(!(hc>maxdistgrid/4||hc>hc1&&hc>hc2)||hc<=1){
+                    onrigde=false;
+                    break
+                }
+            }
+            return onrigde;
+        }
+        function joinpathsecif1option(sec){
+            let connections=numbconnections(sec);
+            for(let i=connections.length-1;i>=0;i--){
+                if(connections[i][0]===1||connections[i][1]===1){
+                    if(connections[i][0]===1){
+                        for(let ii=0;ii<sec.length;ii++){
+                            if(i===ii){
+                                continue
+                            }
+                            if(sec[ii][0][0]===sec[i][0][0]&&sec[ii][0][1]===sec[i][0][1]){
+                                sec[i].splice(0,1);
+                                sec[i].reverse();
+                                sec[ii]=[...sec[i],...sec[ii]];
+                                sec.splice(i,1);
+                                connections=numbconnections(sec);
+                                break
+                            }else if(sec[ii][sec[ii].length-1][0]===sec[i][0][0]&&sec[ii][sec[ii].length-1][1]===sec[i][0][1]){
+                                sec[i].splice(0,1);
+                                sec[ii]=[...sec[ii],...sec[i]];
+                                sec.splice(i,1);
+                                connections=numbconnections(sec);
+                                break
+                            }
+                        }
+                    }else{
+                        for(let ii=0;ii<sec.length;ii++){
+                            if(i===ii){
+                                continue
+                            }
+                            if(sec[ii][0][0]===sec[i][sec[i].length-1][0]&&sec[ii][0][1]===sec[i][sec[i].length-1][1]){
+                                sec[i].splice(sec[i].length-1)
+                                sec[ii]=[...sec[i],...sec[ii]];
+                                sec.splice(i,1);
+                                connections=numbconnections(sec);
+                                break
+                            }else if(sec[ii][sec[ii].length-1][0]===sec[i][sec[i].length-1][0]&&sec[ii][sec[ii].length-1][1]===sec[i][sec[i].length-1][1]){
+                                sec[i].splice(sec[i].length-1);
+                                sec[i].reverse();
+                                sec[ii]=[...sec[ii],...sec[i]];
+                                sec.splice(i,1);
+                                connections=numbconnections(sec);
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+            return sec;
+        }
+        function removedupilicatedpath(sec,refarea){
+            for(let i=0;i<sec.length;i++){
+                for(let ii=sec.length-1;ii>i;ii--){
+                    if(sec[i][0][0]===sec[ii][0][0]&&sec[i][0][1]===sec[ii][0][1]&&sec[i][sec[i].length-1][0]===sec[ii][sec[ii].length-1][0]&&sec[i][sec[i].length-1][1]===sec[ii][sec[ii].length-1][1]||
+                    sec[i][sec[i].length-1][0]===sec[ii][0][0]&&sec[i][sec[i].length-1][1]===sec[ii][0][1]&&sec[i][0][0]===sec[ii][sec[ii].length-1][0]&&sec[i][0][1]===sec[ii][sec[ii].length-1][1]){
+                        let path;
+                        if(sec[i][sec[i].length-1][0]===sec[ii][0][0]&&sec[i][sec[i].length-1][1]===sec[ii][0][1]){
+                            path=[...sec[i],...sec[ii]];
+                        }else{
+                            let s=[...sec[i]];
+                            s.reverse();
+                            path=[...s,...sec[ii]];
+                        }
+                        // let perim=path.reduce((pv,cv,iii)=>pv+(iii>0?((cv[0]-path[iii-1][0])**2+(cv[1]-path[iii-1][1])**2)**.5:0),0);
+                        if(polyarea(path.map(v=>v[0]),path.map(v=>v[1]))<refarea/20){
+                            sec.splice(ii,1);
+                        }
+                    }
+                }
+            }
+            return sec;
+        }
+    }
+    function houghtransform(img,width,height,tol){
+        const maxdist=Math.ceil((width**2+height**2)**.5);
+        const rhonb=maxdist*2;
+        const thetanb=180;
+        const sin=new Float32Array(thetanb);
+        const cos=new Float32Array(thetanb);
+        for(let t=0;t<thetanb;t++){
+            const radian=t*Math.PI/180;
+            sin[t]=Math.sin(radian);
+            cos[t]=Math.cos(radian);
+        }
+        const accumulator=new Int32Array(rhonb*thetanb);
+        for(let y=0;y<height;y++){
+            for(let x=0;x<width;x++){
+                if(img[width*y+x]===1){
+                    for(let t=0;t<thetanb;t++){
+                        const rho=Math.round(x*cos[t]+y*sin[t])+maxdist;
+                        if(rho>=0&&rho<=rhonb){
+                            accumulator[rho*thetanb+t]++;
+                        }
+                    }
+                }
+            }
+        }
+        let ais=Array.from({length:accumulator.length},(_,i)=>i);
+        ais.sort((a,b)=>accumulator[b]-accumulator[a]);
+        let makebackgroundi=[];
+        for(let i=0;i<accumulator.length;i++){
+            if((accumulator[ais[i]]>width*tol*.7&&ais[i]%thetanb>=45&&ais[i]%thetanb<=135)||(accumulator[ais[i]]>height*tol*.7&&(ais[i]%thetanb<=45||ais[i]%thetanb>=135))){
+                console.log(`maxlinelength: ${accumulator[ais[i]]}, rho: ${Math.floor(ais[i]/thetanb)-maxdist}, theta: ${ais[i]%thetanb}`);
+                const rho=Math.floor(ais[i]/thetanb)-maxdist;
+                const theta=ais[i]%thetanb;
+                let xys=[];
+                let xye=[];
+                if(Math.abs(theta-90)<=45){
+                    xys[0]=0;
+                    xys[1]=Math.max(Math.min(Math.round(rho/sin[theta]),height-1),0);
+                    xye[0]=width-1;
+                    xye[1]=Math.max(Math.min(Math.round((rho-cos[theta]*width)/sin[theta]),height-1),0);
+                }else{
+                    xys[0]=Math.max(Math.min(Math.round(rho/cos[theta]),width-1),0);
+                    xys[1]=0;
+                    xye[0]=Math.max(Math.min(Math.round((rho-sin[theta]*height)/cos[theta]),width-1),0);
+                    xye[1]=height-1;
+                }
+                let td=[xye[0]-xys[0],xye[1]-xys[1]];
+                let linelength=(td[0]**2+td[1]**2)**.5;
+                td[0]/=linelength;
+                td[1]/=linelength;
+                let maxtd=Math.max(...td.map(v=>Math.abs(v)));
+                let tdxy=[td[0]/maxtd,td[1]/maxtd];
+                let nd=[-td[1],td[0]];
+                let maxnd=Math.max(...nd.map(v=>Math.abs(v)));
+                let ndxy=[nd[0]/maxnd,nd[1]/maxnd];
+                let widthline=[];
+                let cxy=[xys];
+                while(true){
+                    widthline.push(img[xy2i(cxy.at(-1)[0],cxy.at(-1)[1],width,height,img)]);
+                    for(let i=1;i<Math.max(width,height);i++){
+                        let x=cxy.at(-1)[0]+Math.round(ndxy[0]*i);
+                        let y=cxy.at(-1)[1]+Math.round(ndxy[1]*i);
+                        if(x>=0&&y>=0&&x<width&&y<height){
+                            let isline=img[xy2i(x,y,width,height,img)];
+                            if(isline===1){
+                                widthline[widthline.length-1]++;
+                            }else{
+                                break
+                            }
+                        }else{
+                            break
+                        }
+                    }
+                    for(let i=1;i<Math.max(width,height);i++){
+                        let x=cxy.at(-1)[0]+Math.round(-ndxy[0]*i);
+                        let y=cxy.at(-1)[1]+Math.round(-ndxy[1]*i);
+                        if(x>=0&&y>=0&&x<width&&y<height){
+                            let isline=img[xy2i(x,y,width,height,img)];
+                            if(isline===1){
+                                widthline[widthline.length-1]++;
+                            }else{
+                                break
+                            }
+                        }else{
+                            break
+                        }
+                    }
+                    let newxy=cxy.at(-1).map((v,i)=>xys[i]+Math.round(tdxy[i]*cxy.length));
+                    if(newxy[0]<width&&newxy[1]<height){
+                        cxy.push(newxy);
+                    }else{
+                        break
+                    }
+                }
+                if(widthline.reduce((pv,cv)=>cv>0?pv+1:pv,0)/widthline.length>tol){
+                    let widthlinesorted=widthline.toSorted((a,b)=>a-b);
+                    let median=widthlinesorted[Math.round(widthlinesorted.length/2)];
+                    let q1=widthlinesorted[Math.round(widthlinesorted.length/4)];
+                    let q3=widthlinesorted[Math.round(3*widthlinesorted.length/4)];
+                    let iqr=q3-q1;
+                    let maxlinewidth=q3+1.5*iqr;
+                    for(let i=0;i<widthline.length;i++){
+                        if(widthline[i]<maxlinewidth){
+                            makebackgroundi.push(xy2i(cxy[i][0],cxy[i][1],width,height,img));
+                            for(let ii=1;ii<=maxlinewidth/2;ii++){
+                                let x=cxy[i][0]+Math.round(ndxy[0]*ii);
+                                let y=cxy[i][1]+Math.round(ndxy[1]*ii);
+                                if(x>=0&&y>=0&&x<width&&y<height){
+                                    makebackgroundi.push(xy2i(x,y,width,height,img));
+                                }else{
+                                    break
+                                }
+                            }
+                            for(let ii=1;ii<=maxlinewidth/2;ii++){
+                                let x=cxy[i][0]+Math.round(-ndxy[0]*ii);
+                                let y=cxy[i][1]+Math.round(-ndxy[1]*ii);
+                                if(x>=0&&y>=0&&x<width&&y<height){
+                                    makebackgroundi.push(xy2i(x,y,width,height,img));
+                                }else{
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for(let i=0;i<makebackgroundi.length;i++){
+            img[makebackgroundi[i]]=0;
+        }
+    }
+    self.onmessage=(e)=>{
+        let options=e.data.options;
+        let processbox=e.data.processbox;
+        let scale=options.scaleheight/processbox[3];//-4/(1+Math.exp(-(processbox[3]-200)/25))+5;
+        let removenoisesize=options.noisemin;
+        let cwidth=e.data.width;
+        let cheight=e.data.height;
+        let canvasorig=new OffscreenCanvas(cwidth,cheight);
+        canvasorig.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(e.data.image),cwidth,cheight),0,0);
+        // let data=new Uint8ClampedArray(e.data.image);
+        let width=Math.floor(scale*processbox[2]);
+        let height=Math.floor(scale*processbox[3]);
+        let canvas=new OffscreenCanvas(width,height);
+        canvas.getContext('2d').drawImage(canvasorig,...processbox,0,0,width,height);
+        let cd=canvas.getContext('2d').getImageData(0,0,width,height).data;
+        let grey=new Uint8ClampedArray(width*height);
+        let iv=0;
+        let avbrightness=0;
+        for(let i=0;i<cd.length;i+=4){
+            const avg=(.299*(cd[i]*cd[i+3]/255+(255-cd[i+3])) + .587*(cd[i+1]*cd[i+3]/255+(255-cd[i+3])) + .114*(cd[i+2]*cd[i+3]/255+(255-cd[i+3])));
+            grey[iv]=avg;
+            avbrightness+=avg;
+            iv++;
+        }
+        // for (let i=processbox[1];i<processbox[1]+processbox[3];i++) {
+        //     for(let ii=processbox[0];ii<processbox[0]+processbox[2];ii++){
+        //         let iii=xy2i(ii,i,cwidth,cheight,data);
+        //         const avg=(.299*(data[iii]*data[iii+3]/255+(255-data[iii+3])) + .587*(data[iii+1]*data[iii+3]/255+(255-data[iii+3])) + .114*(data[iii+2]*data[iii+3]/255+(255-data[iii+3])));
+        //         // const avg=data[iii+3]===255?.299*data[iii] + .587*data[iii+1] + .114*data[iii+2]:data[iii+3]>0?0:255;
+        //         grey[iv]=avg;
+        //         avbrightness+=avg;
+        //         iv++;
+        //     }
+        // }
+        avbrightness/=iv;
+        if(avbrightness<127.5){
+            for(let i=0;i<iv;i++){
+                grey[i]=255-grey[i];
+            }
+        }
+        let T=[];
+        let w=Math.max(3,Math.round(Math.sqrt(width*height)*options.windowfrac));
+        let I=[];
+        let I2=[];
+        for(let i=0;i<grey.length;i++){
+            let x=i%width;
+            let y=Math.floor(i/width);
+            I.push(grey[i]+(x>0?I[i-1]:0)+(y>0?I[(y-1)*width+x]:0)-(x>0&&y>0?I[(y-1)*width+x-1]:0));
+            I2.push(grey[i]*grey[i]+(x>0?I2[i-1]:0)+(y>0?I2[(y-1)*width+x]:0)-(x>0&&y>0?I2[(y-1)*width+x-1]:0));
+        }
+        let mG=I[I.length-1]/I.length;
+        let sG=Math.sqrt((I2[I2.length-1]-I[I.length-1]*I[I.length-1]/I.length)/I2.length);
+        for(let i=0;i<grey.length;i++){
+            let x=i%width;
+            let y=Math.floor(i/width);
+            let xr=Math.min(x+w,width-1);
+            let xl=Math.max(x-w,0);
+            let yb=Math.min(y+w,height-1);
+            let yt=Math.max(y-w,0);
+            let n=((xr-xl+1)*(yb-yt+1));
+            let m=(I[yb*width+xr]+(yt>0&&xl>0?I[(yt-1)*width+xl-1]:0)-((yt>0?I[(yt-1)*width+xr]:0)+(xl>0?I[yb*width+xl-1]:0)))/n;
+            let S2=(I2[yb*width+xr]+(yt>0&&xl>0?I2[(yt-1)*width+xl-1]:0)-((yt>0?I2[(yt-1)*width+xr]:0)+(xl>0?I2[yb*width+xl-1]:0)));
+            let sd=Math.sqrt((S2-m*m*n)/n);
+            // T.push(m-.2*sd);//Niblack’s
+            T.push(m*(1-.1*(1-sd/128)));//Sauvola’s
+            // let k=.5;
+            // let M=0;
+            // T.push((1-.5)*m+k*M+k*sd/128*(m-M));//Wolf
+            // T.push(m*(1+.01*(1-sd/sG)-.6*(m/mG-sd/sG)));
+        }
+        let bw=new Uint8Array(grey.length);
+        for (let i = 0; i < grey.length; i++) {
+            bw[i]=grey[i]<=T[i];
+        }
+        houghtransform(bw,width,height,options.backgroundlinetol);
+        let blackandwhite=new Uint8ClampedArray(grey.length*4);
+        for (let i = 0; i < grey.length; i++) {
+            blackandwhite[4*i]=bw[i]===1?0:255;
+            blackandwhite[4*i + 1]=blackandwhite[4*i];
+            blackandwhite[4*i + 2]=blackandwhite[4*i];
+            blackandwhite[4*i + 3]=255;
+        }
+        let canvasscaled=new OffscreenCanvas(width,height);
+        canvasscaled.getContext('2d').putImageData(new ImageData(blackandwhite,width,height),0,0);
+        let canvasback=new OffscreenCanvas(processbox[2],processbox[3]);
+        // canvasback.getContext('2d').imageSmoothingEnabled = true;
+        // canvasback.getContext('2d').imageSmoothingQuality = 'high';
+        canvasback.getContext('2d').drawImage(canvasscaled,0,0,width,height,0,0,processbox[2],processbox[3]);
+        let backdata=canvasback.getContext('2d').getImageData(0,0,processbox[2],processbox[3]).data;
+        self.postMessage({"status":"update","width":processbox[2],"height":processbox[3],"image":backdata.buffer},[backdata.buffer]);
+
+
+        let connected=[];
+        let connectedall=new Set();
+        for(let i=0;i<blackandwhite.length;i+=4){
+            if(blackandwhite[i]===255||connectedall.has(i)){
+                continue
+            }
+            let c=listconnected(i,width,height,blackandwhite);
+            connected.push(c);
+            c.forEach(v=>connectedall.add(v));
+        }
+        let letterskel=[];
+        if(connected.length>0){
+            connected.sort((a,b)=>a.length-b.length);
+            let maxls=connected[connected.length-1].length;
+            let noise=connected.filter((v)=>v.length<=maxls*removenoisesize).flat();
+            noise.forEach(i=>{blackandwhite[i]=255;blackandwhite[i+1]=255;blackandwhite[i+2]=255});
+            let letters;
+            if(!e.data.typed){
+                letters=connected.filter((v)=>v.length>maxls*removenoisesize);
+            }else{
+                letters=connected;
+            }
+            letterskel=[];
+            let xymaxmin=[];
+            for(let i=letters.length-1;i>=0;i--){
+                let xy=letters[i].map(v=>i2xy(v,width,height,blackandwhite));
+                letterskel.push(letterskeletonmorphology(xy));
+                xymaxmin.push([Math.min(...xy.map(v=>v[0])),Math.max(...xy.map(v=>v[0])),Math.min(...xy.map(v=>v[1])),Math.max(...xy.map(v=>v[1]))]);
+            }
+//             //combine parts of i, j, =
+//             for(let i=letterskel.length-1;i>=0;i--){
+//                 let xdifi=xymaxmin[i][1]-xymaxmin[i][0];
+//                 let ydifi=xymaxmin[i][3]-xymaxmin[i][2];
+//                 let Ai=xdifi*ydifi;
+//                 for(let ii=i-1;ii>=0;ii--){
+//                     let xdifii=xymaxmin[ii][1]-xymaxmin[ii][0];
+//                     let ydifii=xymaxmin[ii][3]-xymaxmin[ii][2];
+//                     let Aii=xdifii*ydifii;
+//                     if(xymaxmin[i][0]>xymaxmin[ii][0]-xdifii// min x dot >min x base-widh
+//                         &&xymaxmin[i][1]<=xymaxmin[ii][1]+xdifii// max x dot <max x base+widh
+//                         &&xymaxmin[i][3]<xymaxmin[ii][2]//base of dot above top of stick
+//                         &&xymaxmin[i][2]>xymaxmin[ii][2]-ydifii//top of dot lower than double base height
+//                         &&Ai<Aii//area of dot less than stick
+//                     ){//is i or j
+// //i as vertical line//letterskel[ii]=[[[xymaxmin[ii][0]+xdifii/2,xymaxmin[ii][2]],[xymaxmin[ii][0]+xdifii/2,xymaxmin[ii][3]]],[[xymaxmin[i][0]+.4*xdifi,xymaxmin[i][2]+ydifi/2],[xymaxmin[i][0]+.6*xdifi,xymaxmin[i][2]+ydifi/2]]];
+//                         letterskel[ii].push(...letterskel[i]);
+//                         xymaxmin[ii][0]=Math.min(xymaxmin[ii][0],xymaxmin[i][0]);
+//                         xymaxmin[ii][1]=Math.max(xymaxmin[ii][1],xymaxmin[i][1]);
+//                         xymaxmin[ii][2]=Math.min(xymaxmin[ii][2],xymaxmin[i][2]);
+//                         xymaxmin[ii][3]=Math.max(xymaxmin[ii][3],xymaxmin[i][3]);
+//                         letterskel.splice(i,1);
+//                         xymaxmin.splice(i,1);
+//                         break
+//                     }else if(ydifi/xdifi<.2&&ydifii/xdifii<.2&&Math.abs(xymaxmin[i][0]+xdifi/2-(xymaxmin[ii][0]+xdifii/2))<(xdifi+xdifii)/4&&Math.abs(xymaxmin[i][2]-xymaxmin[ii][2])<(xdifi+xdifii)/3){
+//                         let iseqials=true;
+//                         for(let iii=0;iii<xymaxmin.length;iii++){
+//                             if(iii===i||iii===ii){continue}
+//                             let xm=(xymaxmin[0]+xymaxmin[1])/2;
+//                             let ym=(xymaxmin[2]+xymaxmin[3])/2;
+//                             if(Math.min(xymaxmin[i][0],xymaxmin[ii][0])<xm&&xm<Math.max(xymaxmin[i][1],xymaxmin[ii][1])&&Math.min(xymaxmin[i][2],xymaxmin[i][3],xymaxmin[ii][2],xymaxmin[ii][3])<ym&&ym<Math.max(xymaxmin[i][2],xymaxmin[i][3],xymaxmin[ii][2],xymaxmin[ii][3])){
+//                                 iseqials=false;
+//                             }
+//                         }
+//                         if(iseqials){
+//                             letterskel[ii].push(...letterskel[i]);
+//                             xymaxmin[ii][0]=Math.min(xymaxmin[ii][0],xymaxmin[i][0]);
+//                             xymaxmin[ii][1]=Math.max(xymaxmin[ii][1],xymaxmin[i][1]);
+//                             xymaxmin[ii][2]=Math.min(xymaxmin[ii][2],xymaxmin[i][2]);
+//                             xymaxmin[ii][3]=Math.max(xymaxmin[ii][3],xymaxmin[i][3]);
+//                             letterskel.splice(i,1);
+//                             xymaxmin.splice(i,1);
+//                             break
+//                         }
+//                     }
+//                 }
+//             }
+//             //find ÷
+//             let removeaspartofdivi=[];
+//             let divs=[];
+//             for(let i=letterskel.length-1;i>=0;i--){
+//                 let xdifi=xymaxmin[i][1]-xymaxmin[i][0];
+//                 let ydifi=xymaxmin[i][3]-xymaxmin[i][2];
+//                 if(ydifi/xdifi<.2){
+//                     let between=[];
+//                     for(let ii=0;ii<letterskel.length;ii++){
+//                         if(ii===i){continue}
+//                         if(xymaxmin[ii][0]>xymaxmin[i][0]+xdifi/4&&xymaxmin[ii][1]<xymaxmin[i][1]-xdifi/4){
+//                             between.push(ii);
+//                         }
+//                     }
+//                     if(between.length>=2){
+//                         let middiv=(xymaxmin[i][2]+xymaxmin[i][3])/2;
+//                         let mindabove=Number.POSITIVE_INFINITY;
+//                         let mindabovei=-1;
+//                         let mindbelow=Number.POSITIVE_INFINITY;
+//                         let mindbelowi=-1;
+//                         for(let ii=0;ii<between.length;ii++){
+//                             if(xymaxmin[between[ii]][2]>middiv&&xymaxmin[between[ii]][2]-middiv<mindbelow){
+//                                 mindbelow=xymaxmin[between[ii]][2]-middiv;
+//                                 mindbelowi=between[ii];
+//                             }else if(xymaxmin[between[ii]][3]<middiv&&middiv-xymaxmin[between[ii]][3]<mindabove){
+//                                 mindabove=middiv-xymaxmin[between[ii]][3];
+//                                 mindabovei=between[ii];
+//                             }
+//                         }
+//                         if(mindabovei>-1&&mindbelowi>-1){
+//                             let midx=xymaxmin[i][0]+xdifi/2;
+//                             let dottopwidth=xymaxmin[mindabovei][1]-xymaxmin[mindabovei][1];
+//                             let dotbotwidth=xymaxmin[mindbelowi][1]-xymaxmin[mindbelowi][1];
+//                             let dottopheight=xymaxmin[mindabovei][3]-xymaxmin[mindabovei][2];
+//                             let dotbotheight=xymaxmin[mindbelowi][3]-xymaxmin[mindbelowi][2];
+//                             if(mindabove<xdifi/2&&mindbelow<xdifi/2&&dottopwidth<xdifi/5&&dotbotwidth<xdifi/5&&dottopheight<xdifi/5&&dotbotheight<xdifi/5){
+//                                 removeaspartofdivi.push(i,mindabovei,mindbelowi);
+//                                 divs[divs.length]=[...letterskel[i],...letterskel[mindabovei],...letterskel[mindbelowi]];
+//                             }
+//                         }
+//                     }
+//                 }
+//             }
+//             removeaspartofdivi.sort((a,b)=>a-b);
+//             for(let i=removeaspartofdivi.length-1;i>=0;i--){
+//                 letterskel.splice(removeaspartofdivi[i],1);
+//                 xymaxmin.splice(removeaspartofdivi[i],1);
+//             }
+//             for(let i=0;i<divs.length;i++){
+//                 letterskel.push(divs[i]);
+//             }
+        }
+        for(let i=0;i<letterskel.length;i++){
+            for(let ii=0;ii<letterskel[i].length;ii++){
+                for(let iii=0;iii<letterskel[i][ii].length-2;iii++){
+                    let xd=letterskel[i][ii][iii+2][0]-letterskel[i][ii][iii][0];
+                    let yd=letterskel[i][ii][iii+2][1]-letterskel[i][ii][iii][1];
+                    let n=(xd**2+yd**2)**.5;
+                    if(Math.abs((-yd*(letterskel[i][ii][iii+1][0]-letterskel[i][ii][iii][0])+xd*(letterskel[i][ii][iii+1][1]-letterskel[i][ii][iii][1]))/n)<.1){
+                        letterskel[i][ii].splice(iii+1,1);
+                        iii--;
+                    }
+                }
+                for(let iii=0;iii<letterskel[i][ii].length;iii++){
+                    for(let iv=0;iv<letterskel[i][ii][iii].length;iv++){
+                        letterskel[i][ii][iii][iv]/=scale;
+                    }
+                }
+            }
+        }
+        // let canvasscaled=new OffscreenCanvas(width,height);
+        // canvasscaled.getContext('2d').putImageData(new ImageData(blackandwhite,width,height),0,0);
+        // let canvasback=new OffscreenCanvas(processbox[2],processbox[3]);
+        // canvasback.getContext('2d').imageSmoothingEnabled = true;
+        // canvasback.getContext('2d').imageSmoothingQuality = 'high';
+        canvasback.getContext('2d').drawImage(canvasscaled,0,0,width,height,0,0,processbox[2],processbox[3]);
+        blackandwhite=canvasback.getContext('2d').getImageData(0,0,processbox[2],processbox[3]).data;
+        self.postMessage({"status":"done","typed":e.data.typed,"letterskel":letterskel,"width":processbox[2],"height":processbox[3],"image":blackandwhite.buffer},[blackandwhite.buffer]);
+    }
+}
+
+
+

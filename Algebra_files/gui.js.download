@@ -1,0 +1,1076 @@
+
+var scrolltimer=null;
+function ein(){
+    document.getElementById('input').disabled=false;
+    document.getElementById('input').addEventListener('paste',pastemodify);
+};
+window.onresize=()=>{
+    document.getElementById("viewwindow").style.height=(window.innerHeight-10*window.devicePixelRatio)+'px';
+    // onscreenkeyboard('keyboard',"input","errors",'inputdisplay');
+};
+function tempdisableallclick(){
+    var h=(e)=>{
+        e.stopPropagation();
+        e.preventDefault();
+    }
+    document.addEventListener('click',h,true);
+    setTimeout(()=>{document.removeEventListener('click',h,true);},150);
+}
+// function paste(){
+//     var input=document.getElementById("input");
+//     try{
+//         navigator.clipboard.readText().then(clipText =>input.value=input.value.substring(0,input.selectionStart)+clipText+input.value.substring(input.selectionStart,input.value.length));
+//     }catch{
+//         if(document.getElementById("viewwindow").value!=undefined){
+//             input.value=input.value.substring(0,input.selectionStart)+document.getElementById("viewwindow").value+input.value.substring(input.selectionStart,input.value.length);
+//         }
+//     }
+//     input.focus();
+//     input.oninput("input","errors","inputdisplay");
+//     document.getElementById("viewwindow").value=undefined;
+// }
+function copyToClipboard(text) {
+    try{
+        navigator.clipboard.writeText(text);
+    }catch{
+        document.getElementById("viewwindow").value=text;
+    }
+}
+// let latextext=String.raw`|ab|\frac{dy}{dx}\int_{0}^{x}tdt+\frac{d}{dx}\left(x^{2}\right)+\sin\left(x\right)\cos\left(x\right)\tan\left(x\right)+\frac{\sin^{-1}\left(x\right)}{\cos^{-1}\left(x\right)}-\frac{\tan^{-1}\left(x\right)\exp\left(x\right)\ln\left(x\right)\log\left(x\right)\log_{22}\left(x\right)\sqrt[5]{x}x^{\frac{31}{22}}\operatorname{abs}\left(x\right)\left|x\right|\sqrt{x}\pi}{3^{x}}{e}^{x\log_{10}\left(x\right)}\sin\left(x\right)\tan\left(x\right)\arcsin\left(x\cos\left(x\right)\right)\arccos\left(x\right)\arctan\left(x\right)\ln\left(x\right)\frac{d}{dx}\left(x\right)\int x dx\int\limits_{a}^{b}x dx\left|x\right|\text{arg}\left(x\right)\Re\left(x\right)\Im\left(x\right)\left(\overline{x}\right)=q`;
+// console.log(latexpaste(latextext));
+async function pastemodify(event){
+    event.preventDefault();
+    const clipboardData=(event.clipboardData||window.clipboardData);
+    if(clipboardData.files&&clipboardData.files.length){
+        for(item of clipboardData.items){
+            if(item.type.startsWith('image/')){
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    img.src = e.target.result;
+                    canvasphoto.style.display = 'block';
+                    cancelbutton.style.display='block';
+                    okbutton.style.display='block';
+                    photooptionsdiv.style.display='block';
+                    document.getElementById("takephoto").value="";
+                };
+                reader.readAsDataURL(item.getAsFile());
+                break
+            }
+        }
+    }else{
+        let pastedText=await navigator.clipboard.readText()
+        pastedText=latexpaste(pastedText);
+        let textarea = event.target;
+        let currentText = textarea.value;
+        let selectionStart = textarea.selectionStart;
+        let selectionEnd = textarea.selectionEnd;
+        const newText = currentText.slice(0, selectionStart) + pastedText + currentText.slice(selectionEnd);
+        textarea.value = newText;
+        input.oninput("input","errors","inputdisplay");
+    }
+}
+function latexpaste(text){
+    text=text.replaceAll(" ","");
+    let torep=[];
+    let diffs=/\\int/g
+    while((match = diffs.exec(text)) !== null) {
+        let start=match.index;
+        let end=match.index+match[0].length;
+        let remaining=text.slice(match.index+match[0].length);
+        if(remaining.slice(0,7)==='\\limits'){
+            remaining=remaining.slice(7);
+            end+=7;
+        }
+        let l=null;
+        if(remaining[0]==='_'){
+            remaining=remaining.slice(1);
+            end+=1;
+            let inbrac=getbetweenbrac(remaining);
+            if(inbrac!==undefined){
+                l=inbrac[0];
+                remaining=remaining.slice(inbrac[0].length+inbrac[1][0].length+inbrac[1][1].length);
+                end+=inbrac[0].length+inbrac[1][0].length+inbrac[1][1].length;
+            }else if(remaining[1]==='^'){
+                l=remaining[0];
+            }else if(remaining.match(/^-?[0-9]\d*(\.\d+)?(?=^)/)!==null){
+                l=remaining.match(/^-?[0-9]\d*(\.\d+)?(?=^)/)[0];
+                remaining=remaining.slice(l.length);
+                end+=l.length;
+            }
+        }
+        let u=null;
+        if(remaining[0]==='^'){
+            remaining=remaining.slice(1);
+            end+=1;
+            let inbrac=getbetweenbrac(remaining);
+            if(inbrac!==undefined){
+                u=inbrac[0];
+                remaining=remaining.slice(inbrac[0].length+inbrac[1][0].length+inbrac[1][1].length);
+                end+=inbrac[0].length+inbrac[1][0].length+inbrac[1][1].length;
+            }else if(remaining[1]==='^'){
+                u=remaining[0];
+            }else if(remaining.match(/^-?[0-9]\d*(\.\d+)?(?=^)/)!==null){
+                u=remaining.match(/^-?[0-9]\d*(\.\d+)?(?=^)/)[0];
+                remaining=remaining.slice(u.length);
+                end+=u.length;
+            }
+        }
+        let between=getbetweenbrac(text.slice(start));
+        if(between!=null&&between[0].length+between[1][0].length>end-start){
+            let inint=between[0];
+            end=start+between[0].length+between[1][0].length+between[1][1].length+1;
+            let v=text[end-1];
+            torep.push([text.slice(start,end),'int('+inint+','+v+(l!=null&&u!=null?','+l+','+u:'')+')']);
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    diffs=text.match(/\\frac{d[^ \d]}{d[^ \d]}/g);
+    if(diffs!==null){
+        for(let i=0;i<diffs.length;i++){
+            text=text.replace(diffs,'diff('+diffs[i][7]+','+diffs[i][11]+')')
+        }
+    }
+    diffs=/\\frac{d}{d[^ \d]}/g;
+    torep=[];
+    while((match = diffs.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined){
+            torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1],'diff('+inbrac[0]+','+match[0][10]+')']);
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    let fracs=/\\frac/g;
+    while((match = fracs.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined){
+            let inbot=getbetweenbrac(remaining.slice(inbrac[1][0].length+inbrac[0].length+inbrac[1][1].length));
+            if(inbot!==undefined){
+                torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1]+inbot[1][0]+inbot[0]+inbot[1][1],'(('+inbrac[0]+')/('+inbot[0]+'))']);
+            }
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    let logwithbase=/\\log_/g;
+    while((match = logwithbase.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined){
+            let inlog=getbetweenbrac(remaining.slice(inbrac[1][0].length+inbrac[0].length+inbrac[1][1].length));
+            if(inlog!==undefined){
+                torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1]+inlog[1][0]+inlog[0]+inlog[1][1],'(ln('+inlog[0]+')/ln('+inbrac[0]+'))']);
+            }
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    let nroots=/\\sqrt/g;
+    while((match = nroots.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined&&inbrac[1][0]==='['){
+            let insqrt=getbetweenbrac(remaining.slice(inbrac[1][0].length+inbrac[0].length+inbrac[1][1].length));
+            if(insqrt!==undefined){
+                torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1]+insqrt[1][0]+insqrt[0]+insqrt[1][1],'('+insqrt[0]+')^(1/('+inbrac[0]+'))']);
+            }
+        }else if(inbrac!==undefined){
+            torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1],'('+inbrac[0]+')^(1/2)']);
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    diffs=/\\operatorname{abs}/g;
+    while((match = diffs.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined){
+            torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1],'abs('+inbrac[0]+')']);
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    diffs=/\\overline/g;
+    while((match = diffs.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined){
+            torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1],'conj('+inbrac[0]+')']);
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    diffs=/\\Im/g;
+    while((match = diffs.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined){
+            torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1],'imag('+inbrac[0]+')']);
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    diffs=/\\Re/g;
+    while((match = diffs.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined){
+            torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1],'real('+inbrac[0]+')']);
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    diffs=/\\text{arg}/g;
+    while((match = diffs.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined){
+            torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1],'arg('+inbrac[0]+')']);
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    diffs=/\|/g;
+    let nopen=0;
+    while((match = diffs.exec(text)) !== null){
+        let remaining;
+        if(text.slice(match.index-5,match.index)==='\\left'){
+            remaining=text.slice(match.index-5);
+        }else if(!(text.slice(match.index-6,match.index)==='\\right')){
+            if(nopen===0){
+                remaining=text.slice(match.index);
+                nopen++;
+            }else{
+                nopen--;
+            }
+        }
+        if(remaining!==undefined){
+            let inbrac=getbetweenbrac(remaining);
+            if(inbrac!==undefined){
+                torep.push([inbrac[1][0]+inbrac[0]+inbrac[1][1],'abs('+inbrac[0]+')']);
+            }
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    diffs=/_/g;
+    while((match = diffs.exec(text)) !== null) {
+        let remaining=text.slice(match.index+match[0].length);
+        let inbrac=getbetweenbrac(remaining);
+        if(inbrac!==undefined){
+            torep.push([match[0]+inbrac[1][0]+inbrac[0]+inbrac[1][1],'_'+inbrac[0]]);
+        }
+    }
+    for(let r of torep){
+        text=text.replace(r[0],r[1]);
+    }
+    torep=[];
+    text=text.replaceAll('\\sin^{-1}','arcsin');
+    text=text.replaceAll('\\cos^{-1}','arccos');
+    text=text.replaceAll('\\tan^{-1}','arctan');
+    text=text.replaceAll('\\arcsin','arcsin');
+    text=text.replaceAll('\\arccos','arccos');
+    text=text.replaceAll('\\arctan','arctan');
+    text=text.replaceAll('\\sin','sin');
+    text=text.replaceAll('\\cos','cos');
+    text=text.replaceAll('\\tan','tan');
+    text=text.replaceAll('\\exp','e^');
+    text=text.replaceAll('\\log','log');
+    text=text.replaceAll('\\ln','ln');
+    text=text.replaceAll('\\pi','π');
+    text=text.replaceAll('\\alpha','α');
+    text=text.replaceAll('\\beta','β');
+    text=text.replaceAll('\\gamma','γ');
+    text=text.replaceAll('\\delta','δ');
+    text=text.replaceAll('\\epsilon','ϵ');
+    text=text.replaceAll('\\zeta','ζ');
+    text=text.replaceAll('\\eta','η');
+    text=text.replaceAll('\\Theta','Θ');
+    text=text.replaceAll('\\theta','θ');
+    text=text.replaceAll('\\iota','ι');
+    text=text.replaceAll('\\kappa','κ');
+    text=text.replaceAll('\\Lambda','Λ');
+    text=text.replaceAll('\\lambda','λ');
+    text=text.replaceAll('\\mu','μ');
+    text=text.replaceAll('\\nu','ν');
+    text=text.replaceAll('\\Xi','Ξ');
+    text=text.replaceAll('\\xi','ξ');
+    text=text.replaceAll('\\Pi','Π');
+    text=text.replaceAll('\\Sigma','Σ');
+    text=text.replaceAll('\\sigma','σ');
+    text=text.replaceAll('\\tau','τ');
+    text=text.replaceAll('\\Phi','Φ');
+    text=text.replaceAll('\\phi','ϕ');
+    text=text.replaceAll('\\chi','χ');
+    text=text.replaceAll('\\Psi','Ψ');
+    text=text.replaceAll('\\psi','ψ');
+    text=text.replaceAll('\\Omega','Ω');
+    text=text.replaceAll('\\omega','ω');
+    text=text.replaceAll('\\left','(');
+    text=text.replaceAll('\\right',')');
+    text=text.replaceAll('{','(');
+    text=text.replaceAll('}',')');
+    text=text.replaceAll('\\','');
+    return text;
+}
+function getbetweenbrac(text){
+    let bractypes=[['{','}'],['(',')'],['|','|'],['[',']'],['\\left(','\\right)'],['\\left|','\\right|'],['\\left[','\\right]'],['\\int','d']];
+    let bt;
+    for(let b of bractypes){
+        if(text.indexOf(b[0])===0){
+            bt=b;
+            break
+        }
+    }
+    if(bt===undefined){
+        console.log('No open bracket found');
+        return
+    }
+    let counter=1;
+    let lasti=bt[0].length
+    while(counter>0&&bt!==undefined){
+        let nextob=text.indexOf(bt[0],lasti);
+        let nextcb=text.indexOf(bt[1],lasti);
+        if(nextcb===-1){
+            lasti=text.length+bt[1].length;
+            break
+        }else if(nextob===-1){
+            lasti=nextcb+bt[1].length;
+            counter--;
+        }else if(nextob===nextcb){
+            lasti=nextcb+bt[1].length;
+            counter--
+        }else{
+            let min=Math.min(nextob,nextcb)
+            if(min===nextob){
+                lasti=min+bt[0].length;
+                counter++
+            }else{
+                lasti=min+bt[1].length;
+                counter--
+            }
+        }
+    }
+    text=text.slice(bt[0].length,lasti-bt[1].length);
+    return [text,bt]
+}
+document.addEventListener('pointerdown',(ev)=>{
+    let menu=document.getElementById('opmenu');
+    if(menu!==null){
+        var menupos=menu.getBoundingClientRect();
+        if(ev.pageX<menupos.left||ev.pageX>menupos.right||ev.pageY<menupos.top||ev.pageY>menupos.bottom){
+            document.body.removeChild(menu);
+        }
+        return;
+    }
+});
+document.addEventListener('keydown', function(event) {
+    if(eq.intsubdialog===undefined){
+        document.getElementById("input").focus();
+        if (event.ctrlKey && event.key === 'z') {
+            eq.history.undo(eq);
+            event.preventDefault();
+        }else if(event.ctrlKey && event.key==='y'||event.ctrlKey&&event.key==='Z'){
+            eq.history.redo(eq);
+            event.preventDefault();
+        }else if(event.key==='Enter'){
+            equpdate(eq,eqinput);
+        }else if(event.ctrlKey && event.key==='v'&&document.getElementById("viewwindow").value!==undefined){
+            var input=document.getElementById("input");
+            input.value=input.value.substring(0,input.selectionStart)+document.getElementById("viewwindow").value+input.value.substring(input.selectionStart,input.value.length);
+            input.focus();
+            input.oninput("input","errors","inputdisplay");
+            document.getElementById("viewwindow").value=undefined;
+            event.preventDefault();
+        }
+    }
+});
+function eqnew(eq){
+    if(eq.equation!==''){
+        eq.history.addelement("New equation",deepCopy(eq.equation));
+        eq.equation='';
+        eq.sortanddraw();
+    }
+}
+function equpdate(eq,eqinput){
+    if(eq.equation===''&&(!Array.isArray(eqinput.equation)||eqinput.equation[0]!=='=')){
+        eqinput.inputerrors+='An equals sign is required<br>';
+        document.getElementById('errors').innerHTML=eqinput.inputerrors;
+    }
+    if(eqinput.inputerrors===''&&(eqinput.equation!==''||eqinput.applybothsidesop!=='')){
+        if(eq.equation===''&&Array.isArray(eqinput.equation)&&eqinput.equation[0]==='='){
+            if(eq.equation!==''){
+                eq.history.addelement("New equation",deepCopy(eq.equation));
+            }
+            eq.equation=deepCopy(eqinput.equation);
+            eq.sortanddraw();
+            document.getElementById('input').value='';               
+            document.getElementById('inputdisplay').innerHTML='';
+            eqinput.equation='';
+            clearletters();
+        }else if(eqinput.applybothsidesop!==''){
+            var describtext='';
+            if(eqinput.applybothsidesop==='+'){
+                describtext='Added \\('+printlatex(eqinput.equation)+'\\) to both sides';
+            }else if(eqinput.applybothsidesop==='*'){
+                describtext='Multiplied both sides by \\('+printlatex(eqinput.equation)+'\\)';
+            }else if(eqinput.applybothsidesop==='/'){
+                describtext='Divided both sides by \\('+printlatex(eqinput.equation)+'\\)';
+            }else if(eqinput.applybothsidesop==='^'){
+                describtext='Applied the power \\('+printlatex(eqinput.equation)+'\\) to both sides';
+            }else if(eqinput.applybothsidesop==='^^'){
+                describtext='Both sides were placed into the power of \\('+printlatex(eqinput.equation)+'\\)';
+            }else if(eqinput.applybothsidesop==='abs'){
+                describtext='The absolute value function was applied to both sides.';
+            }else if(eqinput.applybothsidesop==='arg'){
+                describtext='The complex argument function was applied to both sides.';
+            }else if(eqinput.applybothsidesop==='real'){
+                describtext='The real part of a complex number function was applied to both sides.';
+            }else if(eqinput.applybothsidesop==='imag'){
+                describtext='The imaginary part of a complex number function was applied to both sides.';
+            }else if(eqinput.applybothsidesop==='conj'){
+                describtext='The complex conjugate function was applied to both sides.';
+            }else if(equation.functionnames.includes(eqinput.applybothsidesop)){
+                describtext='The function \\(\\'+printlatex(eqinput.applybothsidesop)+'()\\) was applied to both sides.';
+            }else if(/diff\(,[^\)]+\)/.test(eqinput.applybothsidesop)){
+                describtext='The derivative with respect to \\('+eqinput.equation[2]+'\\) was applied to both sides';
+            }else if(/int\(,[^\)]+\)/.test(eqinput.applybothsidesop)||/int\(,[^,]+,[^,]+,[^,]+\)/.test(eqinput.applybothsidesop)){
+                describtext='The integral with respect to \\('+eqinput.equation[2]+'\\) was applied to both sides';
+            }
+            eq.history.addelement(describtext,deepCopy(eq.equation));
+            for(let i=1;i<eq.equation.length;i++){
+                if(eqinput.applybothsidesop==='^^'){
+                    eq.equation[i]=['^',deepCopy(eqinput.equation),deepCopy(eq.equation[i])];
+                }else if(/diff\(,[^\)]+\)/.test(eqinput.applybothsidesop)){
+                    eq.equation[i]=[eqinput.equation[0],deepCopy(eq.equation[i]),eqinput.equation[2]];
+                }else if(/int\(,[^\)]+\)/.test(eqinput.applybothsidesop)){
+                    eq.equation[i]=[eqinput.equation[0],deepCopy(eq.equation[i]),eqinput.equation[2]];
+                }else if(/int\(,[^,]+,[^,]+,[^,]+\)/.test(eqinput.applybothsidesop)){
+                    eq.equation[i]=[eqinput.equation[0],deepCopy(eq.equation[i]),eqinput.equation[2],,eqinput.equation[3],eqinput.equation[4]];
+                }else if(equation.functionnames.includes(eqinput.applybothsidesop)){
+                    eq.equation[i]=[eqinput.applybothsidesop,deepCopy(eq.equation[i])];
+                }else{
+                    eq.equation[i]=[eqinput.applybothsidesop,deepCopy(eq.equation[i]),deepCopy(eqinput.equation)];
+                }
+            }
+            document.getElementById('input').value='';               
+            document.getElementById('inputdisplay').innerHTML='';
+            eqinput.equation='';
+            eqinput.applybothsidesop='';
+            clearletters();
+            eq.sortanddraw();
+        }else if(Array.isArray(eqinput.equation)&&eqinput.equation[0]==='='){
+            eq.subsituteuserinput(deepCopy(eqinput.equation));
+            document.getElementById('input').value='';
+            document.getElementById('inputdisplay').innerHTML='';
+            eqinput.equation='';
+            clearletters();
+        }
+    }
+}
+
+function onscreenkeyboard(idloc,idinput,iderror,idlatex){
+    var input=document.getElementById(idinput);
+    var operators=['=','(',')','+','-','*','/','^'];
+    var numbers=[',','_','.','0','1','2','3','4','5','6','7','8','9'];
+    var functions=['ln()','e^()','log()','sin()','arcsin()','cos()','arccos()','tan()','arctan()','diff(,)','int(,)','abs()','arg()','real()','imag()','conj()'];
+    var elowercase=['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z'];
+    var euppercase=['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'];
+    var glowercase=['\u03b1','\u03b2','\u03b3','\u03b4','\u03b5','\u03b6','\u03b7','\u03b8','\u03b9','\u03ba','\u03bb','\u03bc','\u03bd','\u03be','\u03bf','\u03c0','\u03c1','\u03c2','\u03c3','\u03c4','\u03c5','\u03c6','\u03c7','\u03c8','\u03c9'];
+    var guppercase=['\u0393','\u0394','\u0398','\u039b','\u039e','\u03a0','\u03a3','\u03a6','\u03a8','\u03a9'];
+
+    kbloc=document.getElementById(idloc);
+    while(kbloc.firstChild) {
+        kbloc.removeChild(kbloc.firstChild);
+    }
+    if(keyboardstate===2){
+        let ec=document.createElement("canvas");
+        ec.id="spaceforhandwriteinput";
+        kbloc.appendChild(ec);
+        let buttons=document.getElementById("handwritebuttons");
+        if(buttons.childNodes.length===1){
+            takephotobutton=document.createElement("button");
+            buttons.appendChild(takephotobutton);
+            takephotobutton.innerHTML="&#128247;";
+            takephotobutton.onclick=()=>{
+                document.getElementById('takephoto').click()
+            }
+            let undobutton=document.createElement('button');
+            buttons.appendChild(undobutton);
+            undobutton.style.touchAction='none';
+            undobutton.innerHTML='\u21ba';
+            undobutton.onclick=()=>{
+                eq.history.undo(eq);
+                input.focus();
+            }
+            let redobutton=document.createElement('button');
+            buttons.appendChild(redobutton);
+            redobutton.style.touchAction='none';
+            redobutton.innerHTML='\u21bb';
+            redobutton.onclick=()=>{
+                eq.history.redo(eq);
+                document.getElementById('container').scrollTo(document.getElementById('container').scrollLeft,document.getElementById('container').scrollHeight);
+                input.focus();
+            }
+            //SAVE LOAD BUTTONS
+            const btnsave=document.createElement('button');
+            btnsave.style.touchAction='none';
+            btnsave.innerHTML='SAVE';
+            btnsave.onclick=()=>{
+                let savedata={equation:eq.equation,historytext:eq.history.text,historyeq:eq.history.eq};
+                let filename=new Date().toISOString().split(".")[0].replaceAll(":","")+'.json';
+                var dataStr = "data:text/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(savedata));
+                const link = document.createElement('a');
+                link.href = dataStr;
+                link.download = filename;
+                document.body.appendChild(link); // Append to the body (optional, but good practice)
+                link.click();
+                document.body.removeChild(link);
+            };
+            buttons.appendChild(btnsave);
+            var btnload=document.createElement('button');
+            btnload.style.touchAction='none';
+            btnload.innerHTML='LOAD';
+            btnload.onclick=()=>{
+                document.getElementById('fileInput').click();
+            };
+            btnload.style.margin='0px 20px 0px 0px';
+            buttons.appendChild(btnload);
+            document.getElementById('fileInput').addEventListener('change', function(event) {
+                const files = event.target.files; // Get the FileList object
+                if (files.length > 0) {
+                    const selectedFile = files[0];
+                    const reader=new FileReader();
+                    reader.onload=(e)=>{
+                        const fileContent = e.target.result;
+                        try{
+                            const data=JSON.parse(fileContent);
+                            while(eq.history.text.length>0){
+                                eq.history.undo(eq);
+                            }
+                            for(let i=0;i<data.historytext.length;i++){
+                                eq.history.addelement(data.historytext[i],data.historyeq[i]);
+                            }
+                            eq.equation=data.equation;
+                            eq.sortanddraw();
+                            document.getElementById("errors").innerHTML="Loaded File Successfully."
+                        }catch{
+                            while(eq.history.textredo.length>0){
+                                eq.history.redo(eq);
+                            }
+                            document.getElementById("errors").innerHTML="Error: Loading from file failed."
+                        }
+                    }
+                    reader.readAsText(selectedFile);
+                    this.value='';
+                }
+            });
+        }
+        resizecanvas()
+        show()
+        // kbloc.appendChild(document.getElementById("handwriteinput"));
+        // kbloc.appendChild(document.getElementById("writemovetogal"));
+    }else{
+        hide()
+        // let kbwidth=window.innerWidth-15;
+        // let children=document.getElementById('container').children;
+        // for(let c of children){
+        //     if(c.scrollWidth>kbwidth){
+        //         kbwidth=c.scrollWidth;
+        //     }
+        // }
+        // kbwidth=kbwidth-5;
+        var container=document.createElement('div');
+        kbloc.appendChild(container);
+        // container.style.width=kbwidth+'px';
+        container.style.overflow='hidden';
+        container.style.whiteSpace='nowrap';
+        new horozontaldragscroll(container);
+
+        let undobutton=document.createElement('button');
+        container.appendChild(undobutton);
+        undobutton.style.touchAction='none';
+        undobutton.innerHTML='\u21ba';
+        undobutton.onclick=()=>{
+            eq.history.undo(eq);
+            input.focus();
+        }
+        let redobutton=document.createElement('button');
+        container.appendChild(redobutton);
+        redobutton.style.touchAction='none';
+        redobutton.innerHTML='\u21bb';
+        redobutton.onclick=()=>{
+            eq.history.redo(eq);
+            document.getElementById('container').scrollTo(document.getElementById('container').scrollLeft,document.getElementById('container').scrollHeight);
+            input.focus();
+        }
+
+        let shiftbtn=document.createElement('button');
+        container.appendChild(shiftbtn);
+        shiftbtn.style.touchAction='none';
+        let shiftnotcolor=shiftbtn.style.backgroundColor;
+
+        let leftarrowbtn=document.createElement('button');
+        container.appendChild(leftarrowbtn);
+        leftarrowbtn.style.touchAction='none';
+        leftarrowbtn.innerHTML='\u2190';
+        leftarrowbtn.onclick=()=>{
+            let pos=input.selectionStart;
+            input.focus();
+            input.selectionStart=pos-1;
+            input.selectionEnd=pos-1;
+        }
+        let rightarrowbtn=document.createElement('button');
+        container.appendChild(rightarrowbtn);
+        rightarrowbtn.style.touchAction='none';
+        rightarrowbtn.innerHTML='\u2192';
+        rightarrowbtn.onclick=()=>{
+            let pos=input.selectionStart;
+            input.focus();
+            input.selectionStart=pos+1;
+            input.selectionEnd=pos+1;
+        }
+
+        let backspacebtn=document.createElement('button');
+        container.appendChild(backspacebtn);
+        backspacebtn.style.touchAction='none';
+        backspacebtn.innerHTML='\u232b';
+        backspacebtn.onclick=()=>{
+            let pos=input.selectionStart;
+            input.value=input.value.substring(0,pos-1)+input.value.substring(pos,input.value.length);
+            input.focus();
+            input.selectionStart=pos-1;
+            input.selectionEnd=pos-1;
+            input.oninput(idinput,iderror,idlatex);
+        }
+        backspacebtn.style.margin='0px 20px 0px 0px';
+
+        for(let i=0;i<operators.length;i++){
+            const btn=document.createElement('button');
+            btn.style.touchAction='none';
+            if(operators[i]==='*'){
+                btn.innerHTML='\u00d7';
+            }else if(operators[i]==='/'){
+                btn.innerHTML='\u00f7';
+            }else{
+                btn.innerHTML=operators[i];
+            }
+            if(i===operators.length-1){
+                btn.style.margin='0px 20px 0px 0px';
+            }
+            btn.onclick=()=>{
+                let pos=input.selectionStart;
+                input.value=input.value.substring(0,pos)+operators[i]+input.value.substring(pos,input.value.length);
+                input.focus();
+                input.selectionStart=pos+1;
+                input.selectionEnd=pos+1;
+                input.oninput(idinput,iderror,idlatex);
+            };
+            container.appendChild(btn);
+        }
+        if(keyboardstate===0){
+            var container=document.createElement('div');
+            kbloc.appendChild(container);
+            // container.style.width=kbwidth+'px';
+            container.style.overflow='hidden';
+            container.style.whiteSpace='nowrap';
+            container.style.marginTop="5px"
+            new horozontaldragscroll(container);
+        }
+        for(let i=0;i<functions.length;i++){
+            const btn=document.createElement('button');
+            btn.style.touchAction='none';
+            btn.innerHTML=functions[i];
+            if(i===functions.length-1){
+                btn.style.margin='0px 20px 0px 0px';
+            }
+            btn.onclick=()=>{
+                let pos=input.selectionStart;
+                input.value=input.value.substring(0,pos)+functions[i]+input.value.substring(pos,input.value.length);
+                input.focus();
+                input.selectionStart=pos+functions[i].length-1;
+                input.selectionEnd=pos+functions[i].length-1;
+                input.oninput(idinput,iderror,idlatex);
+            };
+            container.appendChild(btn);
+        }
+        //SAVE LOAD BUTTONS AFTER FUNCTIONS
+        const btnsave=document.createElement('button');
+        btnsave.style.touchAction='none';
+        btnsave.innerHTML='SAVE';
+        btnsave.onclick=()=>{
+            let savedata={equation:eq.equation,historytext:eq.history.text,historyeq:eq.history.eq};
+            let filename=new Date().toISOString().split(".")[0].replaceAll(":","")+'.json';
+            var dataStr = "data:text/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(savedata));
+            const link = document.createElement('a');
+            link.href = dataStr;
+            link.download = filename;
+            document.body.appendChild(link); // Append to the body (optional, but good practice)
+            link.click();
+            document.body.removeChild(link);
+        };
+        container.appendChild(btnsave);
+        var btnload=document.createElement('button');
+        btnload.style.touchAction='none';
+        btnload.innerHTML='LOAD';
+        btnload.onclick=()=>{
+            document.getElementById('fileInput').click();
+        };
+        btnload.style.margin='0px 20px 0px 0px';
+        container.appendChild(btnload);
+        document.getElementById('fileInput').addEventListener('change', function(event) {
+            const files = event.target.files; // Get the FileList object
+            if (files.length > 0) {
+                const selectedFile = files[0];
+                const reader=new FileReader();
+                reader.onload=(e)=>{
+                    const fileContent = e.target.result;
+                    try{
+                        const data=JSON.parse(fileContent);
+                        while(eq.history.text.length>0){
+                            eq.history.undo(eq);
+                        }
+                        for(let i=0;i<data.historytext.length;i++){
+                            eq.history.addelement(data.historytext[i],data.historyeq[i]);
+                        }
+                        eq.equation=data.equation;
+                        eq.sortanddraw();
+                        document.getElementById("errors").innerHTML="Loaded File Successfully."
+                    }catch{
+                        while(eq.history.textredo.length>0){
+                            eq.history.redo(eq);
+                        }
+                        document.getElementById("errors").innerHTML="Error: Loading from file failed."
+                    }
+                }
+                reader.readAsText(selectedFile);
+                this.value='';
+            }
+        });
+
+
+        if(keyboardstate===0){
+            var container=document.createElement('div');
+            kbloc.appendChild(container);
+            // container.style.width=kbwidth+'px';
+            container.style.overflow='hidden';
+            container.style.whiteSpace='nowrap';
+            container.style.marginTop="5px"
+            new horozontaldragscroll(container);
+        }
+        for(let i=0;i<numbers.length;i++){
+            const btn=document.createElement('button');
+            btn.style.touchAction='none';
+            btn.innerHTML=numbers[i];
+            if(i===numbers.length-1){
+                btn.style.margin='0px 20px 0px 0px';
+            }
+            btn.onclick=()=>{
+                let pos=input.selectionStart;
+                input.value=input.value.substring(0,pos)+numbers[i]+input.value.substring(pos,input.value.length);
+                input.focus();
+                input.selectionStart=pos+1;
+                input.selectionEnd=pos+1;
+                input.oninput(idinput,iderror,idlatex);
+            };
+            container.appendChild(btn);
+        }
+        
+        var ec=document.createElement('div');
+        if(keyboardstate===0){
+            kbloc.appendChild(ec);
+            // ec.style.width=kbwidth+'px';
+            ec.style.overflow='hidden';
+            ec.style.whiteSpace='nowrap';
+            ec.style.marginTop="5px"
+            new horozontaldragscroll(ec);
+        }else{
+            container.appendChild(ec);
+            ec.style.display = 'inline-block';
+        }
+        var gc=document.createElement('div');
+        if(keyboardstate===0){
+            kbloc.appendChild(gc);
+            // gc.style.width=kbwidth+'px';
+            gc.style.overflow='hidden';
+            gc.style.whiteSpace='nowrap';
+            gc.style.marginTop="5px"
+            new horozontaldragscroll(gc);
+        }else{
+            container.appendChild(gc);
+            gc.style.display = 'inline-block';
+        }
+
+        
+        shiftbtn.innerHTML='\u21E7';
+        shiftbtn.onclick=(e)=>{
+            if(shiftbtn.value==='off'){
+                shiftbtn.value='on';
+                shiftbtn.style.backgroundColor='grey';
+                while(gc.firstChild){
+                    gc.removeChild(gc.firstChild);
+                }
+                for(let i=0;i<guppercase.length;i++){
+                    const btn=document.createElement('button');
+                    btn.style.touchAction='none';
+                    btn.innerHTML=guppercase[i];
+                    if(i===guppercase.length-1){
+                        btn.style.margin='0px 20px 0px 0px';
+                    }
+                    btn.onclick=()=>{
+                        let pos=input.selectionStart;
+                        input.value=input.value.substring(0,pos)+guppercase[i]+input.value.substring(pos,input.value.length);
+                        input.focus();
+                        input.selectionStart=pos+1;
+                        input.selectionEnd=pos+1;
+                        input.oninput(idinput,iderror,idlatex);
+                    }
+                    gc.appendChild(btn);
+                }
+                while(ec.firstChild){
+                    ec.removeChild(ec.firstChild);
+                }
+                for(let i=0;i<euppercase.length;i++){
+                    const btn=document.createElement('button');
+                    btn.style.touchAction='none';
+                    btn.innerHTML=euppercase[i];
+                    if(i===euppercase.length-1){
+                        btn.style.margin='0px 20px 0px 0px';
+                    }
+                    btn.onclick=()=>{
+                        let pos=input.selectionStart;
+                        input.value=input.value.substring(0,pos)+euppercase[i]+input.value.substring(pos,input.value.length);
+                        input.focus();
+                        input.selectionStart=pos+1;
+                        input.selectionEnd=pos+1;
+                        input.oninput(idinput,iderror,idlatex);
+                    }
+                    ec.appendChild(btn);
+                }
+            }else{
+                shiftbtn.value='off';
+                shiftbtn.style.backgroundColor=shiftnotcolor;
+                while(gc.firstChild){
+                    gc.removeChild(gc.firstChild);
+                }
+                for(let i=0;i<glowercase.length;i++){
+                    const btn=document.createElement('button');
+                    btn.style.touchAction='none';
+                    btn.innerHTML=glowercase[i];
+                    if(i===glowercase.length-1){
+                        btn.style.margin='0px 20px 0px 0px';
+                    }
+                    btn.onclick=()=>{
+                        let pos=input.selectionStart;
+                        input.value=input.value.substring(0,pos)+glowercase[i]+input.value.substring(pos,input.value.length);
+                        input.focus();
+                        input.selectionStart=pos+1;
+                        input.selectionEnd=pos+1;
+                        input.oninput(idinput,iderror,idlatex);
+                    }
+                    gc.appendChild(btn);
+                }
+                while(ec.firstChild){
+                    ec.removeChild(ec.firstChild);
+                }
+                for(let i=0;i<elowercase.length;i++){
+                    const btn=document.createElement('button');
+                    btn.style.touchAction='none';
+                    btn.innerHTML=elowercase[i];
+                    if(i===elowercase.length-1){
+                        btn.style.margin='0px 20px 0px 0px';
+                    }
+                    btn.onclick=()=>{
+                        let pos=input.selectionStart;
+                        input.value=input.value.substring(0,pos)+elowercase[i]+input.value.substring(pos,input.value.length);
+                        input.focus();
+                        input.selectionStart=pos+1;
+                        input.selectionEnd=pos+1;
+                        input.oninput(idinput,iderror,idlatex);
+                    }
+                    ec.appendChild(btn);
+                }
+            }
+            input.focus();
+        };
+        shiftbtn.click();
+    }
+}
+var keyboardstate=0;
+function showhideelement(id) {
+    keyboardstate=(keyboardstate+1)%4
+    var x=document.getElementById(id);
+    if (keyboardstate<3) {
+        onscreenkeyboard('keyboard',"input","errors",'inputdisplay');
+        x.style.display="block";
+    } else {
+        hide()
+        x.style.display = "none";
+    }
+    document.getElementById('container').scrollTo(document.getElementById('container').scrollLeft,document.getElementById('container').scrollHeight);
+}
+
+function addtypesettext(text,id){
+    typeset(()=>{
+        const inputmathdisplay = document.querySelector('#'+id);
+        inputmathdisplay.innerHTML=text;
+        return inputmathdisplay;
+    });
+}
+
+function typeset(code) {
+    MathJax.texReset();
+    MathJax.startup.promise = MathJax.startup.promise.then(() => {code();return MathJax.typesetPromise()}).then(()=>{
+        document.getElementById('container').scrollTo(document.getElementById('container').scrollLeft,document.getElementById('container').scrollHeight);
+    }).catch((err) => console.log('Typeset failed: ' + err.message));
+    return MathJax.startup.promise;
+}
+
+class horozontaldragscroll{
+    mouseDown=false;
+    startX;
+    scrollLeft;
+    container;
+    stopclick=false;
+    constructor(container){
+        this.container=container;
+        let startDragging=(e)=>{
+            this.mouseDown = true;
+            this.startX=e.pageX-this.container.offsetLeft;
+            this.scrollLeft=this.container.scrollLeft;
+        };
+        let stopDragging=(event)=>{
+            this.mouseDown = false;
+            if(this.stopclick){
+                tempdisableallclick();
+            }
+            this.stopclick=false;
+        };
+        this.container.addEventListener('pointermove', (e) => {
+            e.preventDefault();
+            if(!this.mouseDown) {
+                return;
+            }
+            const x = e.pageX - this.container.offsetLeft;
+            const scroll = x - this.startX;
+            this.container.scrollLeft = this.scrollLeft - scroll;
+            if(Math.abs(scroll)>10){
+                this.stopclick=true;
+            }
+        });
+        this.container.addEventListener('pointerdown',startDragging, false);
+        this.container.addEventListener('pointerup',stopDragging, false);
+        this.container.addEventListener('pointerleave',stopDragging, true);
+    }
+}
+class equationhistory{
+    text=[];
+    textnode=[];
+    image=[];
+    eq=[];
+    textredo=[];
+    textredonode=[];
+    imageredo=[];
+    eqredo=[];
+    addelement(message,equ){
+        var node = document.getElementById('history');
+
+        this.textredo.splice(0,this.textredo.length);
+        this.textredonode.splice(0,this.textredonode.length);
+        this.imageredo.splice(0,this.imageredo.length);
+        this.eqredo.splice(0,this.eqredo.length);
+
+        var neweqimage = document.createElement('canvas');
+        neweqimage.id='equation'+this.image.length;
+        neweqimage.style.touchAction="none";
+        node.appendChild(neweqimage);
+        var eq=new equation();
+        eq.equation=equ;
+        eq.canvasid=neweqimage.id;
+        eq.printimage(eq.equation);
+        eq.sortanddraw();
+        eq.copyevents();
+        this.image.push(neweqimage);
+        this.eq.push(equ);
+
+        var newtext = document.createElement('div');
+        newtext.id='equationtext'+this.image.length;
+        node.appendChild(newtext);
+        this.textnode.push(newtext);
+        this.text.push(message);
+        addtypesettext(message,newtext.id);
+    }
+    undo(equ){
+        var node = document.getElementById('history');
+        if(this.image.length>0){
+            var remimage=this.image.pop();
+            this.imageredo.push(remimage);
+            node.removeChild(remimage);
+            
+            var remtext=this.text.pop();
+            var remtextnode=this.textnode.pop()
+            this.textredo.push(remtext);
+            this.textredonode.push(remtextnode);
+            node.removeChild(remtextnode);
+
+            this.eqredo.push(equ.equation);
+            equ.equation=this.eq.pop();
+            equ.sortanddraw();
+        }else if(equ.equation!==''){
+            this.imageredo.push('');
+            this.textredo.push('');
+            this.textredonode.push('');
+            this.eqredo.push(equ.equation);
+            equ.equation='';
+            equ.sortanddraw();
+        }
+    }
+    redo(equ){
+        var node = document.getElementById('history');
+        if(this.imageredo.length>0){
+            var req=this.eqredo.pop();
+            this.eq.push(equ.equation);
+            equ.equation=req;
+            equ.sortanddraw();
+            
+            var im=this.imageredo.pop();
+            if(im!==''){
+                this.image.push(im);
+                node.appendChild(im);
+            }
+            
+            var message=this.textredo.pop();
+            var messagenode=this.textredonode.pop();
+            if(im!==''){
+                this.text.push(message);
+                this.textnode.push(messagenode);
+                node.appendChild(messagenode);
+            }
+        }
+    }
+}
