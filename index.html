@@ -4,35 +4,34 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Algebra</title>
-    <meta name="description" content="Computer algebra system with a tab strip, split docking, and floating popups.">
+    <meta name="description" content="Computer algebra system with split tab panes and floating windows.">
     <link rel="canonical" href="./">
     <link rel="stylesheet" href="./windows.css">
 </head>
 <body>
     <div id="wm-app">
-        <div id="wm-tabstrip" role="tablist" aria-label="Tab strip">
-            <div id="wm-tabs"></div>
-            <button type="button" id="wm-add-window" title="New window" aria-label="New window">+</button>
-        </div>
         <div id="wm-stage">
-            <div id="wm-dock" class="is-empty"></div>
+            <div id="wm-dock"></div>
             <div id="wm-popups"></div>
             <div id="wm-drop-catcher"></div>
             <div id="wm-dock-preview" aria-hidden="true">
                 <div class="wm-preview-zone" data-zone="left">
-                    <span class="wm-preview-label">Dock left · split horizontally</span>
+                    <span class="wm-preview-label">Split left</span>
                 </div>
                 <div class="wm-preview-zone" data-zone="right">
-                    <span class="wm-preview-label">Dock right · split horizontally</span>
+                    <span class="wm-preview-label">Split right</span>
                 </div>
                 <div class="wm-preview-zone" data-zone="top">
-                    <span class="wm-preview-label">Dock top · split vertically</span>
+                    <span class="wm-preview-label">Split top</span>
                 </div>
                 <div class="wm-preview-zone" data-zone="bottom">
-                    <span class="wm-preview-label">Dock bottom · split vertically</span>
+                    <span class="wm-preview-label">Split bottom</span>
                 </div>
                 <div class="wm-preview-zone" data-zone="center">
-                    <span class="wm-preview-label">Open as popup</span>
+                    <span class="wm-preview-label">Float as popup</span>
+                </div>
+                <div class="wm-preview-zone" data-zone="pane">
+                    <span class="wm-preview-label">Move to this pane</span>
                 </div>
             </div>
             <div id="wm-pool" hidden></div>

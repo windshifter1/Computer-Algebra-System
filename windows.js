@@ -1,27 +1,34 @@
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "cas-windows-v1";
+  const STORAGE_KEY = "cas-windows-v2";
   const DEFAULT_POPUP = { width: 560, height: 440 };
   const MIN_POPUP = { width: 280, height: 200 };
   const ZONE_EDGE = 0.28;
 
   let state = {
-    nextId: 1,
+    nextTab: 1,
+    nextGroup: 1,
     tabs: [],
-    activeId: null,
-    dock: { primary: null, secondary: null, orientation: "horizontal" },
-    popups: {},
+    groups: {},
+    dockIds: [],
+    dockOrientation: "horizontal",
+    focusedGroupId: null,
     zTop: 20,
   };
 
   const els = {};
-  let ignoreNextClick = false;
-  const shells = new Map();
+  const frames = new Map();
+  const groupEls = new Map();
   let dragging = null;
+  let ignoreNextClick = false;
 
-  function uid() {
-    return "w" + state.nextId++;
+  function tabUid() {
+    return "w" + state.nextTab++;
+  }
+
+  function groupUid() {
+    return "g" + state.nextGroup++;
   }
 
   function getTab(id) {
@@ -30,24 +37,16 @@
     });
   }
 
-  function tabIds() {
-    return new Set(
-      state.tabs.map(function (t) {
-        return t.id;
-      })
-    );
+  function tabsIn(gid) {
+    return state.tabs.filter(function (t) {
+      return t.groupId === gid;
+    });
   }
 
-  function isDocked(id) {
-    return state.dock.primary === id || state.dock.secondary === id;
-  }
-
-  function isPopup(id) {
-    return !!state.popups[id];
-  }
-
-  function isOnStage(id) {
-    return isDocked(id) || isPopup(id);
+  function dockGroups() {
+    return state.dockIds.filter(function (id) {
+      return state.groups[id] && state.groups[id].kind === "dock";
+    });
   }
 
   function save() {
@@ -63,616 +62,633 @@
       const parsed = JSON.parse(raw);
       if (!parsed || !Array.isArray(parsed.tabs) || parsed.tabs.length === 0) return false;
       state = parsed;
-      if (!state.dock) {
-        state.dock = { primary: null, secondary: null, orientation: "horizontal" };
-      }
-      if (!state.popups) state.popups = {};
+      if (!state.groups) state.groups = {};
+      if (!state.dockIds) state.dockIds = [];
       if (!state.zTop) state.zTop = 20;
-      pruneState();
+      prune();
       return state.tabs.length > 0;
     } catch (e) {
       return false;
     }
   }
 
-  function pruneState() {
-    const ids = tabIds();
-    let max = 0;
+  function prune() {
+    let maxT = 0;
+    let maxG = 0;
     state.tabs.forEach(function (t) {
       const n = parseInt(String(t.id).replace(/\D/g, ""), 10);
-      if (n > max) max = n;
-      if (!t.title) t.title = "Window " + n;
+      if (n > maxT) maxT = n;
+      if (!state.groups[t.groupId]) t.groupId = state.dockIds[0] || Object.keys(state.groups)[0];
     });
-    if (!state.nextId || state.nextId <= max) state.nextId = max + 1;
-    if (!ids.has(state.activeId)) {
-      state.activeId = state.tabs[0] ? state.tabs[0].id : null;
-    }
-    if (!ids.has(state.dock.primary)) state.dock.primary = null;
-    if (!ids.has(state.dock.secondary)) state.dock.secondary = null;
-    if (state.dock.primary && state.dock.primary === state.dock.secondary) {
-      state.dock.secondary = null;
-    }
-    Object.keys(state.popups).forEach(function (id) {
-      if (!ids.has(id) || isDocked(id)) delete state.popups[id];
+    Object.keys(state.groups).forEach(function (id) {
+      const n = parseInt(String(id).replace(/\D/g, ""), 10);
+      if (n > maxG) maxG = n;
     });
+    if (!state.nextTab || state.nextTab <= maxT) state.nextTab = maxT + 1;
+    if (!state.nextGroup || state.nextGroup <= maxG) state.nextGroup = maxG + 1;
+    state.tabs = state.tabs.filter(function (t) {
+      return t.groupId && state.groups[t.groupId];
+    });
+    Object.keys(state.groups).forEach(function (id) {
+      if (!tabsIn(id).length) delete state.groups[id];
+    });
+    state.dockIds = (state.dockIds || []).filter(function (id) {
+      return state.groups[id] && state.groups[id].kind === "dock";
+    });
+    Object.keys(state.groups).forEach(function (id) {
+      const g = state.groups[id];
+      const tabs = tabsIn(id);
+      if (tabs.length && !tabs.some(function (t) { return t.id === g.activeId; })) {
+        g.activeId = tabs[0].id;
+      }
+    });
+    if (!state.focusedGroupId || !state.groups[state.focusedGroupId]) {
+      state.focusedGroupId = state.dockIds[0] || Object.keys(state.groups)[0] || null;
+    }
   }
 
-  function detachFromDock(id) {
-    if (state.dock.primary === id) {
-      state.dock.primary = state.dock.secondary;
-      state.dock.secondary = null;
-    } else if (state.dock.secondary === id) {
-      state.dock.secondary = null;
+  function createGroup(kind) {
+    const g = { id: groupUid(), kind: kind, activeId: null };
+    if (kind === "popup") {
+      g.x = 48;
+      g.y = 48;
+      g.width = DEFAULT_POPUP.width;
+      g.height = DEFAULT_POPUP.height;
+      g.z = ++state.zTop;
+    }
+    state.groups[g.id] = g;
+    return g;
+  }
+
+  function removeGroup(gid) {
+    delete state.groups[gid];
+    state.dockIds = state.dockIds.filter(function (id) {
+      return id !== gid;
+    });
+    const el = groupEls.get(gid);
+    if (el) {
+      el.remove();
+      groupEls.delete(gid);
+    }
+    if (state.focusedGroupId === gid) {
+      state.focusedGroupId = state.dockIds[0] || Object.keys(state.groups)[0] || null;
     }
   }
 
-  function undock(id) {
-    detachFromDock(id);
-    delete state.popups[id];
-  }
-
-  function createShell(id) {
-    const rec = getTab(id);
-    const titleText = rec ? rec.title : "Window";
-    const shell = document.createElement("div");
-    shell.dataset.windowId = id;
-
-    const chrome = document.createElement("div");
-    chrome.className = "wm-chrome";
-
-    const title = document.createElement("span");
-    title.className = "wm-chrome-title";
-    title.textContent = titleText;
-
-    const ret = document.createElement("button");
-    ret.type = "button";
-    ret.className = "wm-chrome-btn wm-return";
-    ret.title = "Return this window to the tab strip";
-    ret.innerHTML = "↩ <span>Return to tabs</span>";
-    ret.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      returnToTabs(id);
-    });
-
-    chrome.appendChild(title);
-    chrome.appendChild(ret);
-
-    const iframe = document.createElement("iframe");
+  function getOrCreateFrame(tab) {
+    let iframe = frames.get(tab.id);
+    if (iframe) return iframe;
+    iframe = document.createElement("iframe");
     iframe.className = "wm-frame";
     iframe.src = "Algebra.html";
-    iframe.title = titleText;
+    iframe.title = tab.title;
     iframe.addEventListener("load", function () {
       try {
         const doc = iframe.contentDocument;
-        if (doc && doc.documentElement) {
-          doc.documentElement.classList.add("cas-embedded");
-        }
+        if (doc && doc.documentElement) doc.documentElement.classList.add("cas-embedded");
       } catch (err) {}
     });
+    frames.set(tab.id, iframe);
+    return iframe;
+  }
+
+  function destroyFrame(id) {
+    const iframe = frames.get(id);
+    if (iframe) {
+      iframe.src = "about:blank";
+      iframe.remove();
+      frames.delete(id);
+    }
+  }
+
+  function ensureGroupEl(gid) {
+    let group = groupEls.get(gid);
+    if (group) return group;
+    const rec = state.groups[gid];
+    group = document.createElement("div");
+    group.className = "wm-group";
+    group.dataset.groupId = gid;
+
+    const strip = document.createElement("div");
+    strip.className = "wm-tabstrip";
+
+    const tabs = document.createElement("div");
+    tabs.className = "wm-tabs";
+    tabs.setAttribute("role", "tablist");
+
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "wm-add";
+    add.title = "New tab";
+    add.setAttribute("aria-label", "New tab");
+    add.textContent = "+";
+    add.addEventListener("click", function (e) {
+      e.stopPropagation();
+      addTab(gid);
+    });
+
+    strip.appendChild(tabs);
+    strip.appendChild(add);
+
+    const body = document.createElement("div");
+    body.className = "wm-body";
 
     const resize = document.createElement("div");
     resize.className = "wm-resize";
     resize.hidden = true;
 
-    shell.appendChild(chrome);
-    shell.appendChild(iframe);
-    shell.appendChild(resize);
+    group.appendChild(strip);
+    group.appendChild(body);
+    group.appendChild(resize);
 
-    chrome.addEventListener("pointerdown", function (e) {
-      if (e.target.closest("button")) return;
-      if (shell.classList.contains("wm-popup")) startPopupMove(e, id);
-      else focusWindow(id);
+    group.addEventListener("pointerdown", function () {
+      focusGroup(gid);
+    });
+
+    strip.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      if (e.target.closest(".wm-tab") || e.target.closest(".wm-add") || e.target.closest(".wm-tab-close")) return;
+      if (rec.kind === "popup") startPopupMove(e, gid);
     });
 
     resize.addEventListener("pointerdown", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      startPopupResize(e, id);
+      startPopupResize(e, gid);
     });
 
-    shell.addEventListener("pointerdown", function () {
-      if (shell.classList.contains("wm-popup")) bringPopupToFront(id);
-      else focusWindow(id);
-    });
-
-    shells.set(id, shell);
-    return shell;
-  }
-
-  function restyleShell(id, mode) {
-    const shell = shells.get(id) || createShell(id);
-    const rec = getTab(id);
-    const titleEl = shell.querySelector(".wm-chrome-title");
-    const iframe = shell.querySelector("iframe");
-    if (rec) {
-      if (titleEl) titleEl.textContent = rec.title;
-      if (iframe) iframe.title = rec.title;
-    }
-    const resize = shell.querySelector(".wm-resize");
-    if (mode === "popup") {
-      const p = state.popups[id];
-      shell.className = "wm-popup";
-      shell.style.left = p.x + "px";
-      shell.style.top = p.y + "px";
-      shell.style.width = p.width + "px";
-      shell.style.height = p.height + "px";
-      shell.style.zIndex = String(p.z);
-      if (resize) resize.hidden = false;
-    } else {
-      shell.className = "wm-pane";
-      shell.style.left = "";
-      shell.style.top = "";
-      shell.style.width = "";
-      shell.style.height = "";
-      shell.style.zIndex = "";
-      if (resize) resize.hidden = true;
-    }
-    return shell;
-  }
-
-  function destroyShell(id) {
-    const shell = shells.get(id);
-    if (shell) {
-      const iframe = shell.querySelector("iframe");
-      if (iframe) iframe.src = "about:blank";
-      shell.remove();
-      shells.delete(id);
-    }
-  }
-
-  function topPopupId() {
-    let best = null;
-    let z = -Infinity;
-    Object.keys(state.popups).forEach(function (id) {
-      const p = state.popups[id];
-      if (p.z > z) {
-        z = p.z;
-        best = id;
+    tabs.addEventListener("click", function (e) {
+      if (ignoreNextClick) {
+        ignoreNextClick = false;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
       }
+      const close = e.target.closest(".wm-tab-close");
+      const tabEl = e.target.closest(".wm-tab");
+      if (!tabEl) return;
+      if (close) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeTab(tabEl.dataset.windowId);
+        return;
+      }
+      selectTab(tabEl.dataset.windowId);
     });
-    return best;
+
+    tabs.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      if (e.target.closest(".wm-tab-close")) return;
+      const tabEl = e.target.closest(".wm-tab");
+      if (!tabEl) return;
+      const pointerId = e.pointerId;
+      const start = { x: e.clientX, y: e.clientY, started: false };
+      function onMove(ev) {
+        const dx = ev.clientX - start.x;
+        const dy = ev.clientY - start.y;
+        if (!start.started) {
+          if (dx * dx + dy * dy < 36) return;
+          start.started = true;
+          beginTabDrag(tabEl, ev.clientX, ev.clientY);
+        }
+        updateTabDrag(ev.clientX, ev.clientY);
+      }
+      function onUp() {
+        tabEl.removeEventListener("pointermove", onMove);
+        tabEl.removeEventListener("pointerup", onUp);
+        tabEl.removeEventListener("pointercancel", onUp);
+        try {
+          tabEl.releasePointerCapture(pointerId);
+        } catch (err) {}
+        if (start.started) finishDrag();
+      }
+      try {
+        tabEl.setPointerCapture(pointerId);
+      } catch (err) {}
+      tabEl.addEventListener("pointermove", onMove);
+      tabEl.addEventListener("pointerup", onUp);
+      tabEl.addEventListener("pointercancel", onUp);
+    });
+
+    groupEls.set(gid, group);
+    return group;
   }
 
-  function renderTabs() {
+  function renderGroupTabs(gid) {
+    const group = ensureGroupEl(gid);
+    const tabsEl = group.querySelector(".wm-tabs");
+    const rec = state.groups[gid];
     const frag = document.createDocumentFragment();
-    state.tabs.forEach(function (tab) {
-      const btn = document.createElement("div");
-      btn.className = "wm-tab";
-      btn.dataset.windowId = tab.id;
-      btn.setAttribute("role", "tab");
-      btn.setAttribute("aria-selected", tab.id === state.activeId ? "true" : "false");
-      btn.tabIndex = 0;
-      if (tab.id === state.activeId) btn.classList.add("is-active");
-      if (isDocked(tab.id)) btn.classList.add("is-docked");
-      if (isPopup(tab.id)) btn.classList.add("is-popup");
-
-      const label = document.createElement("span");
-      label.className = "wm-tab-title";
-      label.textContent = tab.title;
-      btn.appendChild(label);
-
+    tabsIn(gid).forEach(function (tab) {
+      const el = document.createElement("div");
+      el.className = "wm-tab" + (tab.id === rec.activeId ? " is-active" : "");
+      el.dataset.windowId = tab.id;
+      el.setAttribute("role", "tab");
+      el.tabIndex = 0;
+      const title = document.createElement("span");
+      title.className = "wm-tab-title";
+      title.textContent = tab.title;
       const close = document.createElement("button");
       close.type = "button";
       close.className = "wm-tab-close";
       close.title = "Close " + tab.title;
-      close.setAttribute("aria-label", "Close " + tab.title);
       close.textContent = "×";
-      btn.appendChild(close);
-
-      frag.appendChild(btn);
+      el.appendChild(title);
+      el.appendChild(close);
+      frag.appendChild(el);
     });
-    els.tabs.replaceChildren(frag);
+    tabsEl.replaceChildren(frag);
   }
 
-  function renderLayout() {
-    const d = state.dock;
-    const split = !!(d.primary && d.secondary);
-    els.dock.classList.toggle("is-horizontal", split && d.orientation === "horizontal");
-    els.dock.classList.toggle("is-vertical", split && d.orientation === "vertical");
-    els.dock.classList.toggle("is-empty", !d.primary);
-
-    const onStage = new Set();
-    els.dock.replaceChildren();
-    if (!d.primary) {
-      const empty = document.createElement("p");
-      empty.className = "wm-empty";
-      empty.innerHTML =
-        "The workspace is empty. Click a tab, or press <strong>+</strong> to open a window.";
-      els.dock.appendChild(empty);
-    } else {
-      const a = restyleShell(d.primary, "dock");
-      a.classList.toggle("is-solo", !d.secondary);
-      a.classList.toggle("is-focused", state.activeId === d.primary);
-      els.dock.appendChild(a);
-      onStage.add(d.primary);
-      if (d.secondary) {
-        const b = restyleShell(d.secondary, "dock");
-        b.classList.toggle("is-solo", false);
-        b.classList.toggle("is-focused", state.activeId === d.secondary);
-        els.dock.appendChild(b);
-        onStage.add(d.secondary);
-      }
+  function renderGroupBody(gid) {
+    const rec = state.groups[gid];
+    const group = ensureGroupEl(gid);
+    const body = group.querySelector(".wm-body");
+    const tab = rec.activeId ? getTab(rec.activeId) : tabsIn(gid)[0];
+    if (!tab) {
+      body.replaceChildren();
+      return;
     }
+    rec.activeId = tab.id;
+    const iframe = getOrCreateFrame(tab);
+    if (iframe.parentNode !== body) body.replaceChildren(iframe);
+  }
 
-    const popupIds = Object.keys(state.popups).sort(function (a, b) {
-      return state.popups[a].z - state.popups[b].z;
-    });
-    const top = topPopupId();
-    const popupShells = popupIds.map(function (id) {
-      const shell = restyleShell(id, "popup");
-      shell.classList.toggle("is-top", id === top);
-      onStage.add(id);
-      return shell;
-    });
-    els.popups.replaceChildren.apply(els.popups, popupShells);
-
-    state.tabs.forEach(function (t) {
-      if (!onStage.has(t.id) && shells.has(t.id)) {
-        els.pool.appendChild(shells.get(t.id));
-      }
-    });
-    syncTitles();
+  function styleGroup(gid) {
+    const rec = state.groups[gid];
+    const group = ensureGroupEl(gid);
+    group.classList.toggle("is-focused", gid === state.focusedGroupId);
+    group.classList.toggle("wm-popup", rec.kind === "popup");
+    group.classList.toggle("is-top", rec.kind === "popup" && rec.z === state.zTop);
+    const resize = group.querySelector(".wm-resize");
+    if (rec.kind === "popup") {
+      group.style.left = rec.x + "px";
+      group.style.top = rec.y + "px";
+      group.style.width = rec.width + "px";
+      group.style.height = rec.height + "px";
+      group.style.zIndex = String(rec.z);
+      if (resize) resize.hidden = false;
+    } else {
+      group.style.left = "";
+      group.style.top = "";
+      group.style.width = "";
+      group.style.height = "";
+      group.style.zIndex = "";
+      if (resize) resize.hidden = true;
+    }
   }
 
   function render() {
-    renderTabs();
-    renderLayout();
-    save();
-  }
+    const docks = dockGroups();
+    els.dock.classList.toggle("is-horizontal", docks.length === 2 && state.dockOrientation === "horizontal");
+    els.dock.classList.toggle("is-vertical", docks.length === 2 && state.dockOrientation === "vertical");
+    els.dock.classList.toggle("is-empty", docks.length === 0);
 
-  function syncTitles() {
-    state.tabs.forEach(function (tab) {
-      const shell = shells.get(tab.id);
-      if (!shell) return;
-      const titleEl = shell.querySelector(".wm-chrome-title");
-      const iframe = shell.querySelector("iframe");
-      if (titleEl) titleEl.textContent = tab.title;
-      if (iframe) iframe.title = tab.title;
-    });
-  }
-
-  function updateFocusClasses() {
-    syncTitles();
-    document.querySelectorAll(".wm-pane, .wm-popup").forEach(function (el) {
-      const id = el.dataset.windowId;
-      el.classList.toggle("is-focused", id === state.activeId && el.classList.contains("wm-pane"));
-      el.classList.toggle("is-top", el.classList.contains("wm-popup") && id === topPopupId());
-    });
-    renderTabs();
-    save();
-  }
-
-  function focusWindow(id) {
-    if (!id) return;
-    state.activeId = id;
-    updateFocusClasses();
-  }
-
-  function addWindow() {
-    const rec = { id: uid(), title: "Window " + (state.nextId - 1) };
-    state.tabs.push(rec);
-    state.activeId = rec.id;
-    delete state.popups[rec.id];
-    state.dock.primary = rec.id;
-    state.dock.secondary = null;
-    render();
-  }
-
-  function selectWindow(id) {
-    if (!id) return;
-    const prev = state.activeId;
-    state.activeId = id;
-    if (isPopup(id)) {
-      bringPopupToFront(id);
-      return;
-    }
-    if (isDocked(id)) {
-      updateFocusClasses();
-      return;
-    }
-    delete state.popups[id];
-    if (state.dock.secondary && state.dock.secondary === prev) {
-      state.dock.secondary = id;
-    } else if (state.dock.primary && state.dock.secondary && state.dock.primary === prev) {
-      state.dock.primary = id;
+    if (!docks.length) {
+      const empty = document.createElement("p");
+      empty.className = "wm-empty";
+      empty.innerHTML = "No docked pane. Floats stay as popups, or press <strong>+</strong> in a popup.";
+      els.dock.replaceChildren(empty);
     } else {
-      state.dock.primary = id;
-      if (state.dock.secondary === id) state.dock.secondary = null;
+      const nodes = docks.map(function (gid) {
+        const group = ensureGroupEl(gid);
+        group.classList.toggle("is-solo", docks.length === 1);
+        styleGroup(gid);
+        renderGroupTabs(gid);
+        renderGroupBody(gid);
+        return group;
+      });
+      els.dock.replaceChildren.apply(els.dock, nodes);
     }
+
+    const popupIds = Object.keys(state.groups)
+      .filter(function (id) {
+        return state.groups[id].kind === "popup";
+      })
+      .sort(function (a, b) {
+        return state.groups[a].z - state.groups[b].z;
+      });
+    const popupNodes = popupIds.map(function (gid) {
+      const group = ensureGroupEl(gid);
+      styleGroup(gid);
+      renderGroupTabs(gid);
+      renderGroupBody(gid);
+      return group;
+    });
+    els.popups.replaceChildren.apply(els.popups, popupNodes);
+
+    state.tabs.forEach(function (tab) {
+      const iframe = frames.get(tab.id);
+      const g = state.groups[tab.groupId];
+      if (iframe && g && g.activeId !== tab.id && iframe.parentNode !== els.pool) {
+        els.pool.appendChild(iframe);
+      }
+    });
+    save();
+  }
+
+  function focusGroup(gid) {
+    if (!state.groups[gid]) return;
+    state.focusedGroupId = gid;
+    if (state.groups[gid].kind === "popup") {
+      state.groups[gid].z = ++state.zTop;
+    }
+    Object.keys(state.groups).forEach(function (id) {
+      const el = groupEls.get(id);
+      if (el) {
+        el.classList.toggle("is-focused", id === gid);
+        el.classList.toggle("is-top", state.groups[id].kind === "popup" && id === gid);
+        if (state.groups[id].kind === "popup") el.style.zIndex = String(state.groups[id].z);
+      }
+    });
+    save();
+  }
+
+  function selectTab(id) {
+    const tab = getTab(id);
+    if (!tab) return;
+    const g = state.groups[tab.groupId];
+    g.activeId = id;
+    focusGroup(tab.groupId);
     render();
   }
 
-  function closeWindow(id) {
+  function addTab(gid) {
+    if (!state.groups[gid]) {
+      const g = createGroup("dock");
+      gid = g.id;
+      state.dockIds = [gid];
+    }
+    const tab = {
+      id: tabUid(),
+      title: "Window " + (state.nextTab - 1),
+      groupId: gid,
+    };
+    state.tabs.push(tab);
+    state.groups[gid].activeId = tab.id;
+    state.focusedGroupId = gid;
+    render();
+  }
+
+  function closeTab(id) {
     const idx = state.tabs.findIndex(function (t) {
       return t.id === id;
     });
     if (idx < 0) return;
+    const tab = state.tabs[idx];
+    const gid = tab.groupId;
     state.tabs.splice(idx, 1);
-    undock(id);
-    destroyShell(id);
-    if (state.tabs.length === 0) {
-      state.activeId = null;
-      state.dock.primary = null;
-      state.dock.secondary = null;
-      state.popups = {};
+    destroyFrame(id);
+    const remaining = tabsIn(gid);
+    if (!remaining.length) {
+      removeGroup(gid);
+      if (!state.tabs.length) {
+        const g = createGroup("dock");
+        state.dockIds = [g.id];
+        addTab(g.id);
+        return;
+      }
+    } else if (state.groups[gid] && state.groups[gid].activeId === id) {
+      state.groups[gid].activeId = remaining[0].id;
+    }
+    render();
+  }
+
+  function moveTabToGroup(tabId, gid, beforeId, placeAfter) {
+    const tab = getTab(tabId);
+    if (!tab || !state.groups[gid]) return;
+    const src = tab.groupId;
+    tab.groupId = gid;
+    if (src !== gid) {
+      const srcTabs = tabsIn(src);
+      if (state.groups[src]) {
+        if (!srcTabs.length) removeGroup(src);
+        else if (state.groups[src].activeId === tabId) state.groups[src].activeId = srcTabs[0].id;
+      }
+      state.groups[gid].activeId = tabId;
+    }
+    const without = state.tabs.filter(function (t) {
+      return t.id !== tabId;
+    });
+    if (beforeId) {
+      let at = without.findIndex(function (t) {
+        return t.id === beforeId;
+      });
+      if (at < 0) without.push(tab);
+      else {
+        if (placeAfter) at += 1;
+        without.splice(at, 0, tab);
+      }
+      state.tabs = without;
+    } else if (src !== gid) {
+      state.tabs = without.concat([tab]);
+    }
+    state.focusedGroupId = gid;
+    render();
+  }
+
+  function canSplitFrom(tabId) {
+    const tab = getTab(tabId);
+    if (!tab || !state.groups[tab.groupId]) return false;
+    if (tabsIn(tab.groupId).length > 1) return true;
+    if (state.groups[tab.groupId].kind === "popup" && dockGroups().length >= 1) return true;
+    return dockGroups().length > 1;
+  }
+
+  function splitTab(tabId, zone, hoverGroupId) {
+    const tab = getTab(tabId);
+    if (!tab) return;
+    if (zone === "center") {
+      toPopup(tabId);
+      return;
+    }
+    if (zone === "pane" && hoverGroupId) {
+      moveTabToGroup(tabId, hoverGroupId);
+      return;
+    }
+    const docks = dockGroups();
+    if (docks.length >= 2) {
+      const target = hoverGroupId && state.groups[hoverGroupId] && state.groups[hoverGroupId].kind === "dock"
+        ? hoverGroupId
+        : (zone === "left" || zone === "top" ? docks[0] : docks[1]);
+      moveTabToGroup(tabId, target);
+      if (zone === "left" || zone === "right") state.dockOrientation = "horizontal";
+      if (zone === "top" || zone === "bottom") state.dockOrientation = "vertical";
       render();
       return;
     }
-    if (state.activeId === id) {
-      const next = state.tabs[Math.min(idx, state.tabs.length - 1)];
-      state.activeId = next.id;
-      if (!isOnStage(state.activeId)) state.dock.primary = state.activeId;
+    if (!canSplitFrom(tabId)) return;
+    const src = tab.groupId;
+    const g = createGroup("dock");
+    tab.groupId = g.id;
+    g.activeId = tab.id;
+    const left = tabsIn(src);
+    if (!left.length) removeGroup(src);
+    else if (state.groups[src] && state.groups[src].activeId === tabId) {
+      state.groups[src].activeId = left[0].id;
     }
+    const other = state.groups[src] ? src : docks.filter(function (id) { return id !== g.id; })[0];
+    if (zone === "left" || zone === "top") state.dockIds = [g.id, other].filter(Boolean);
+    else state.dockIds = [other, g.id].filter(Boolean);
+    state.dockOrientation = zone === "left" || zone === "right" ? "horizontal" : "vertical";
+    state.focusedGroupId = g.id;
     render();
   }
 
-  function returnToTabs(id) {
-    const wasActive = state.activeId === id;
-    undock(id);
-    if (wasActive) {
-      state.activeId = state.dock.primary || (state.tabs[0] && state.tabs[0].id);
-    }
-    render();
-  }
-
-  function reorderTab(fromId, toId, placeAfter) {
-    if (fromId === toId) return;
-    const fromIdx = state.tabs.findIndex(function (t) {
-      return t.id === fromId;
-    });
-    if (fromIdx < 0) return;
-    const moved = state.tabs.splice(fromIdx, 1)[0];
-    let insertAt = state.tabs.findIndex(function (t) {
-      return t.id === toId;
-    });
-    if (insertAt < 0) {
-      state.tabs.splice(fromIdx, 0, moved);
+  function toPopup(tabId) {
+    const tab = getTab(tabId);
+    if (!tab) return;
+    const src = tab.groupId;
+    if (state.groups[src] && state.groups[src].kind === "popup" && tabsIn(src).length === 1) {
+      focusGroup(src);
       return;
     }
-    if (placeAfter) insertAt += 1;
-    state.tabs.splice(insertAt, 0, moved);
-    renderTabs();
-    save();
+    const g = createGroup("popup");
+    const stage = els.stage.getBoundingClientRect();
+    const count = Object.keys(state.groups).filter(function (id) {
+      return state.groups[id].kind === "popup";
+    }).length;
+    g.width = Math.min(DEFAULT_POPUP.width, Math.max(MIN_POPUP.width, Math.floor(stage.width * 0.45)));
+    g.height = Math.min(DEFAULT_POPUP.height, Math.max(MIN_POPUP.height, Math.floor(stage.height * 0.55)));
+    g.x = Math.max(16, Math.floor((stage.width - g.width) / 2) + (count - 1) * 28);
+    g.y = Math.max(16, Math.floor((stage.height - g.height) / 2) + (count - 1) * 28);
+    tab.groupId = g.id;
+    g.activeId = tab.id;
+    const left = tabsIn(src);
+    if (!left.length) removeGroup(src);
+    else if (state.groups[src].activeId === tabId) state.groups[src].activeId = left[0].id;
+    state.focusedGroupId = g.id;
+    render();
   }
 
-  function zoneFromPoint(clientX, clientY) {
-    const rect = els.stage.getBoundingClientRect();
-    if (
-      clientX < rect.left ||
-      clientX > rect.right ||
-      clientY < rect.top ||
-      clientY > rect.bottom
-    ) {
-      return null;
+  function groupAtPoint(x, y) {
+    const nodes = document.querySelectorAll(".wm-group");
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const rect = nodes[i].getBoundingClientRect();
+      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return nodes[i];
     }
-    const x = (clientX - rect.left) / rect.width;
-    const y = (clientY - rect.top) / rect.height;
-    const left = x < ZONE_EDGE;
-    const right = x > 1 - ZONE_EDGE;
-    const top = y < ZONE_EDGE;
-    const bottom = y > 1 - ZONE_EDGE;
+    return null;
+  }
+
+  function zoneInRect(x, y, rect) {
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null;
+    const px = (x - rect.left) / rect.width;
+    const py = (y - rect.top) / rect.height;
+    const left = px < ZONE_EDGE;
+    const right = px > 1 - ZONE_EDGE;
+    const top = py < ZONE_EDGE;
+    const bottom = py > 1 - ZONE_EDGE;
     if (left && !top && !bottom) return "left";
     if (right && !top && !bottom) return "right";
     if (top && !left && !right) return "top";
     if (bottom && !left && !right) return "bottom";
     if ((left || right) && (top || bottom)) {
-      if (Math.min(x, 1 - x) < Math.min(y, 1 - y)) return x < 0.5 ? "left" : "right";
-      return y < 0.5 ? "top" : "bottom";
+      if (Math.min(px, 1 - px) < Math.min(py, 1 - py)) return px < 0.5 ? "left" : "right";
+      return py < 0.5 ? "top" : "bottom";
     }
     return "center";
   }
 
-  function showPreview(zone) {
-    const show = !!(dragging && dragging.canDock);
-    els.preview.classList.toggle("is-visible", show);
+  function positionPreview(rect) {
+    const stage = els.stage.getBoundingClientRect();
+    els.preview.style.left = rect.left - stage.left + "px";
+    els.preview.style.top = rect.top - stage.top + "px";
+    els.preview.style.width = rect.width + "px";
+    els.preview.style.height = rect.height + "px";
+  }
+
+  function showPreview(mode, zone) {
+    els.preview.classList.toggle("is-visible", !!mode);
+    els.preview.classList.toggle("is-split", mode === "split");
+    els.preview.classList.toggle("is-move", mode === "move");
     els.preview.querySelectorAll(".wm-preview-zone").forEach(function (el) {
-      el.classList.toggle(
-        "is-active",
-        show && !dragging.overTabId && el.getAttribute("data-zone") === zone
-      );
+      el.classList.toggle("is-active", !!zone && el.getAttribute("data-zone") === zone);
     });
   }
 
-  function applyDock(id, zone) {
-    if (!zone) return;
-    if (zone === "center") {
-      openAsPopup(id);
-      return;
-    }
-    delete state.popups[id];
-    const others = [];
-    if (state.dock.primary && state.dock.primary !== id) others.push(state.dock.primary);
-    if (state.dock.secondary && state.dock.secondary !== id) others.push(state.dock.secondary);
-    const first = zone === "left" || zone === "top";
-    state.dock.orientation = zone === "left" || zone === "right" ? "horizontal" : "vertical";
-    if (first) {
-      state.dock.primary = id;
-      state.dock.secondary = others[0] || null;
-    } else {
-      state.dock.primary = others[0] || id;
-      state.dock.secondary = others[0] ? id : null;
-    }
-    render();
-  }
-
-  function openAsPopup(id) {
-    detachFromDock(id);
-    const stage = els.stage.getBoundingClientRect();
-    const width = Math.min(
-      DEFAULT_POPUP.width,
-      Math.max(MIN_POPUP.width, Math.floor(stage.width * 0.45))
-    );
-    const height = Math.min(
-      DEFAULT_POPUP.height,
-      Math.max(MIN_POPUP.height, Math.floor(stage.height * 0.55))
-    );
-    const count = Object.keys(state.popups).length;
-    state.zTop += 1;
-    state.popups[id] = {
-      x: Math.max(16, Math.floor((stage.width - width) / 2) + count * 28),
-      y: Math.max(16, Math.floor((stage.height - height) / 2) + count * 28),
-      width: width,
-      height: height,
-      z: state.zTop,
-    };
-    state.activeId = id;
-    render();
-  }
-
-  function bringPopupToFront(id) {
-    if (!state.popups[id]) return;
-    state.zTop += 1;
-    state.popups[id].z = state.zTop;
-    const el = shells.get(id);
-    if (el) el.style.zIndex = String(state.zTop);
-    state.activeId = id;
-    document.querySelectorAll(".wm-popup").forEach(function (p) {
-      p.classList.toggle("is-top", p.dataset.windowId === id);
-    });
-    renderTabs();
-    save();
-  }
-
-  function clampPopup(p) {
-    const stage = els.stage.getBoundingClientRect();
-    p.width = Math.max(MIN_POPUP.width, p.width);
-    p.height = Math.max(MIN_POPUP.height, p.height);
-    p.x = Math.min(Math.max(-p.width + 80, p.x), Math.max(0, stage.width - 80));
-    p.y = Math.min(Math.max(0, p.y), Math.max(0, stage.height - 36));
-  }
-
-  function startPopupMove(e, id) {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    bringPopupToFront(id);
-    const p = state.popups[id];
-    const shell = shells.get(id);
-    if (!p || !shell) return;
-    const start = { x: e.clientX, y: e.clientY, left: p.x, top: p.y };
-    const target = e.currentTarget;
-    function onMove(ev) {
-      p.x = start.left + (ev.clientX - start.x);
-      p.y = start.top + (ev.clientY - start.y);
-      clampPopup(p);
-      shell.style.left = p.x + "px";
-      shell.style.top = p.y + "px";
-    }
-    function onUp() {
-      target.removeEventListener("pointermove", onMove);
-      target.removeEventListener("pointerup", onUp);
-      target.removeEventListener("pointercancel", onUp);
-      save();
-    }
-    try {
-      target.setPointerCapture(e.pointerId);
-    } catch (err) {}
-    target.addEventListener("pointermove", onMove);
-    target.addEventListener("pointerup", onUp);
-    target.addEventListener("pointercancel", onUp);
-  }
-
-  function startPopupResize(e, id) {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    bringPopupToFront(id);
-    const p = state.popups[id];
-    const shell = shells.get(id);
-    if (!p || !shell) return;
-    const start = { x: e.clientX, y: e.clientY, w: p.width, h: p.height };
-    const target = e.currentTarget;
-    function onMove(ev) {
-      p.width = start.w + (ev.clientX - start.x);
-      p.height = start.h + (ev.clientY - start.y);
-      clampPopup(p);
-      shell.style.width = p.width + "px";
-      shell.style.height = p.height + "px";
-    }
-    function onUp() {
-      target.removeEventListener("pointermove", onMove);
-      target.removeEventListener("pointerup", onUp);
-      target.removeEventListener("pointercancel", onUp);
-      save();
-    }
-    try {
-      target.setPointerCapture(e.pointerId);
-    } catch (err) {}
-    target.addEventListener("pointermove", onMove);
-    target.addEventListener("pointerup", onUp);
-    target.addEventListener("pointercancel", onUp);
-  }
-
-  function beginTabDrag(tabEl, clientX, clientY) {
-    const id = tabEl.dataset.windowId;
+  function beginTabDrag(tabEl, x, y) {
     dragging = {
-      id: id,
-      canDock: id !== state.activeId,
+      id: tabEl.dataset.windowId,
+      groupId: getTab(tabEl.dataset.windowId).groupId,
       overTabId: null,
       placeAfter: false,
+      hoverGroupId: null,
       zone: null,
-      suppressClick: true,
+      mode: null,
     };
     tabEl.classList.add("is-dragging");
     document.body.classList.add("is-dragging-tab");
     els.ghost.textContent = tabEl.querySelector(".wm-tab-title").textContent;
     els.ghost.classList.add("is-visible");
-    moveGhost(clientX, clientY);
-    if (dragging.canDock) els.catcher.classList.add("is-visible");
-    updateTabDrag(clientX, clientY);
-  }
-
-  function moveGhost(x, y) {
+    els.catcher.classList.add("is-visible");
     els.ghost.style.left = x + 14 + "px";
     els.ghost.style.top = y + 12 + "px";
+    updateTabDrag(x, y);
   }
 
-  function clearTabDropMarks() {
-    els.tabs.querySelectorAll(".wm-tab").forEach(function (t) {
+  function updateTabDrag(x, y) {
+    if (!dragging) return;
+    els.ghost.style.left = x + 14 + "px";
+    els.ghost.style.top = y + 12 + "px";
+    document.querySelectorAll(".wm-tab").forEach(function (t) {
       t.classList.remove("drop-before", "drop-after");
     });
-  }
+    document.querySelectorAll(".wm-tabstrip").forEach(function (s) {
+      s.classList.remove("drop-into");
+    });
 
-  function tabAtPoint(clientX, clientY) {
-    const tabs = els.tabs.querySelectorAll(".wm-tab");
-    for (let i = 0; i < tabs.length; i++) {
-      const tab = tabs[i];
-      if (dragging && tab.dataset.windowId === dragging.id) continue;
-      const rect = tab.getBoundingClientRect();
-      if (
-        clientX >= rect.left &&
-        clientX <= rect.right &&
-        clientY >= rect.top &&
-        clientY <= rect.bottom
-      ) {
-        return tab;
-      }
-    }
-    return null;
-  }
-
-  function updateTabDrag(clientX, clientY) {
-    if (!dragging) return;
-    moveGhost(clientX, clientY);
-    clearTabDropMarks();
-    const zone = dragging.canDock ? zoneFromPoint(clientX, clientY) : null;
-    if (zone) {
-      dragging.overTabId = null;
-      dragging.zone = zone;
-      showPreview(zone);
-      return;
-    }
-    const tab = tabAtPoint(clientX, clientY);
-    if (tab) {
-      const rect = tab.getBoundingClientRect();
-      dragging.placeAfter = clientX > rect.left + rect.width / 2;
-      dragging.overTabId = tab.dataset.windowId;
-      tab.classList.add(dragging.placeAfter ? "drop-after" : "drop-before");
-      dragging.zone = null;
-      showPreview(null);
-      return;
-    }
+    const groupEl = groupAtPoint(x, y);
+    dragging.hoverGroupId = groupEl ? groupEl.dataset.groupId : null;
     dragging.overTabId = null;
     dragging.zone = null;
+    dragging.mode = null;
+
+    if (groupEl) {
+      const strip = groupEl.querySelector(".wm-tabstrip");
+      const body = groupEl.querySelector(".wm-body");
+      const stripRect = strip.getBoundingClientRect();
+      if (x >= stripRect.left && x <= stripRect.right && y >= stripRect.top && y <= stripRect.bottom) {
+        const tabs = strip.querySelectorAll(".wm-tab");
+        let hit = null;
+        for (let i = 0; i < tabs.length; i++) {
+          if (tabs[i].dataset.windowId === dragging.id) continue;
+          const r = tabs[i].getBoundingClientRect();
+          if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            hit = tabs[i];
+            dragging.placeAfter = x > r.left + r.width / 2;
+            break;
+          }
+        }
+        dragging.mode = "strip";
+        dragging.hoverGroupId = groupEl.dataset.groupId;
+        if (hit) {
+          dragging.overTabId = hit.dataset.windowId;
+          hit.classList.add(dragging.placeAfter ? "drop-after" : "drop-before");
+        } else {
+          strip.classList.add("drop-into");
+        }
+        showPreview(null);
+        return;
+      }
+      const bodyRect = body.getBoundingClientRect();
+      positionPreview(groupEl.getBoundingClientRect());
+      const docks = dockGroups();
+      const hoverG = state.groups[groupEl.dataset.groupId];
+      if (hoverG && hoverG.kind === "dock" && docks.length === 1) {
+        const fromHere = dragging.groupId === hoverG.id;
+        if (!fromHere || tabsIn(dragging.groupId).length > 1) {
+          dragging.mode = "split";
+          dragging.zone = zoneInRect(x, y, bodyRect);
+          showPreview("split", dragging.zone);
+          return;
+        }
+      }
+      dragging.mode = "move";
+      const z = zoneInRect(x, y, bodyRect);
+      dragging.zone = z === "center" ? "center" : "pane";
+      showPreview("move", dragging.zone);
+      return;
+    }
     showPreview(null);
   }
 
@@ -682,25 +698,85 @@
     document.body.classList.remove("is-dragging-tab");
     els.ghost.classList.remove("is-visible");
     els.catcher.classList.remove("is-visible");
-    els.preview.classList.remove("is-visible");
-    els.preview.querySelectorAll(".wm-preview-zone").forEach(function (el) {
-      el.classList.remove("is-active");
+    showPreview(null);
+    document.querySelectorAll(".wm-tab").forEach(function (t) {
+      t.classList.remove("is-dragging", "drop-before", "drop-after");
     });
-    clearTabDropMarks();
-    els.tabs.querySelectorAll(".wm-tab").forEach(function (t) {
-      t.classList.remove("is-dragging");
+    document.querySelectorAll(".wm-tabstrip").forEach(function (s) {
+      s.classList.remove("drop-into");
     });
     if (!d) return;
     ignoreNextClick = true;
-    if (d.overTabId) {
-      reorderTab(d.id, d.overTabId, d.placeAfter);
+    if (d.mode === "strip" && d.hoverGroupId) {
+      moveTabToGroup(d.id, d.hoverGroupId, d.overTabId, d.placeAfter);
       return;
     }
-    if (d.zone && d.canDock) applyDock(d.id, d.zone);
+    if (d.mode === "split" && d.zone) {
+      splitTab(d.id, d.zone, d.hoverGroupId);
+      return;
+    }
+    if (d.mode === "move" && d.zone) {
+      splitTab(d.id, d.zone, d.hoverGroupId);
+    }
   }
 
-  function initDom() {
-    els.tabs = document.getElementById("wm-tabs");
+  function startPopupMove(e, gid) {
+    const g = state.groups[gid];
+    if (!g || g.kind !== "popup") return;
+    e.preventDefault();
+    focusGroup(gid);
+    const start = { x: e.clientX, y: e.clientY, left: g.x, top: g.y };
+    const target = e.currentTarget;
+    function onMove(ev) {
+      g.x = Math.max(0, start.left + (ev.clientX - start.x));
+      g.y = Math.max(0, start.top + (ev.clientY - start.y));
+      const el = groupEls.get(gid);
+      if (el) {
+        el.style.left = g.x + "px";
+        el.style.top = g.y + "px";
+      }
+    }
+    function onUp() {
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      save();
+    }
+    try {
+      target.setPointerCapture(e.pointerId);
+    } catch (err) {}
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+  }
+
+  function startPopupResize(e, gid) {
+    const g = state.groups[gid];
+    if (!g || g.kind !== "popup") return;
+    e.preventDefault();
+    focusGroup(gid);
+    const start = { x: e.clientX, y: e.clientY, w: g.width, h: g.height };
+    const target = e.currentTarget;
+    function onMove(ev) {
+      g.width = Math.max(MIN_POPUP.width, start.w + (ev.clientX - start.x));
+      g.height = Math.max(MIN_POPUP.height, start.h + (ev.clientY - start.y));
+      const el = groupEls.get(gid);
+      if (el) {
+        el.style.width = g.width + "px";
+        el.style.height = g.height + "px";
+      }
+    }
+    function onUp() {
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      save();
+    }
+    try {
+      target.setPointerCapture(e.pointerId);
+    } catch (err) {}
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+  }
+
+  function boot() {
     els.stage = document.getElementById("wm-stage");
     els.dock = document.getElementById("wm-dock");
     els.popups = document.getElementById("wm-popups");
@@ -709,102 +785,22 @@
     els.pool = document.getElementById("wm-pool");
     els.ghost = document.getElementById("wm-drag-ghost");
 
-    document.getElementById("wm-add-window").addEventListener("click", addWindow);
-
-    els.tabs.addEventListener("click", function (e) {
-      if (ignoreNextClick) {
-        ignoreNextClick = false;
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      const close = e.target.closest(".wm-tab-close");
-      const tab = e.target.closest(".wm-tab");
-      if (!tab) return;
-      if (close) {
-        e.preventDefault();
-        e.stopPropagation();
-        closeWindow(tab.dataset.windowId);
-        return;
-      }
-      selectWindow(tab.dataset.windowId);
-    });
-
-    els.tabs.addEventListener("keydown", function (e) {
-      const tab = e.target.closest(".wm-tab");
-      if (!tab || e.target.closest(".wm-tab-close")) return;
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        selectWindow(tab.dataset.windowId);
-      }
-    });
-
-    els.tabs.addEventListener("pointerdown", function (e) {
-      if (e.button !== 0) return;
-      if (e.target.closest(".wm-tab-close")) return;
-      const tab = e.target.closest(".wm-tab");
-      if (!tab) return;
-      const pointerId = e.pointerId;
-      const start = { x: e.clientX, y: e.clientY, tab: tab, started: false };
-      function onMove(ev) {
-        const dx = ev.clientX - start.x;
-        const dy = ev.clientY - start.y;
-        if (!start.started) {
-          if (dx * dx + dy * dy < 36) return;
-          start.started = true;
-          beginTabDrag(start.tab, ev.clientX, ev.clientY);
-        }
-        updateTabDrag(ev.clientX, ev.clientY);
-      }
-      function onUp() {
-        tab.removeEventListener("pointermove", onMove);
-        tab.removeEventListener("pointerup", onUp);
-        tab.removeEventListener("pointercancel", onUp);
-        try {
-          tab.releasePointerCapture(pointerId);
-        } catch (err) {}
-        if (start.started) finishDrag();
-      }
-      try {
-        tab.setPointerCapture(pointerId);
-      } catch (err) {}
-      tab.addEventListener("pointermove", onMove);
-      tab.addEventListener("pointerup", onUp);
-      tab.addEventListener("pointercancel", onUp);
-    });
-
-    window.addEventListener("resize", function () {
-      Object.keys(state.popups).forEach(function (id) {
-        clampPopup(state.popups[id]);
-        const shell = shells.get(id);
-        if (!shell) return;
-        const p = state.popups[id];
-        shell.style.left = p.x + "px";
-        shell.style.top = p.y + "px";
-        shell.style.width = p.width + "px";
-        shell.style.height = p.height + "px";
-      });
-      save();
-    });
-  }
-
-  function boot() {
-    initDom();
     if (!load()) {
-      const first = { id: uid(), title: "Window 1" };
-      state.tabs = [first];
-      state.activeId = first.id;
-      state.dock.primary = first.id;
+      const g = createGroup("dock");
+      state.dockIds = [g.id];
+      state.tabs = [{ id: tabUid(), title: "Window 1", groupId: g.id }];
+      g.activeId = state.tabs[0].id;
+      state.focusedGroupId = g.id;
     }
-    if (!state.dock.primary && state.activeId && !isPopup(state.activeId)) {
-      state.dock.primary = state.activeId;
+    if (!dockGroups().length && !Object.keys(state.groups).length) {
+      const g = createGroup("dock");
+      state.dockIds = [g.id];
+      addTab(g.id);
+      return;
     }
     render();
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
-  } else {
-    boot();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
 })();

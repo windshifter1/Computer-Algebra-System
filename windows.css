@@ -1,8 +1,5 @@
-/* Window manager shell — tab strip, docking, popups */
-
 :root {
-  --wm-strip-h: 44px;
-  --wm-chrome-h: 36px;
+  --wm-strip-h: 40px;
   --wm-bg: #e8ecf3;
   --wm-strip: #dfe5ef;
   --wm-surface: #ffffff;
@@ -15,11 +12,6 @@
   --wm-shadow: 0 8px 28px rgba(16, 24, 40, 0.14);
   --wm-radius: 12px;
   --wm-font: "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
-  --wm-z-strip: 100;
-  --wm-z-stage: 1;
-  --wm-z-popup-base: 200;
-  --wm-z-preview: 400;
-  --wm-z-drag: 500;
 }
 
 *,
@@ -40,32 +32,83 @@ body {
 }
 
 #wm-app {
-  display: flex;
-  flex-direction: column;
   height: 100dvh;
-  min-height: 100%;
 }
 
-/* ——— Tab strip (browser-like) ——— */
-#wm-tabstrip {
-  z-index: var(--wm-z-strip);
+#wm-stage {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(900px 420px at 10% 0%, #ffffff 0%, transparent 55%),
+    var(--wm-bg);
+}
+
+#wm-dock {
+  position: absolute;
+  inset: 8px;
+  display: flex;
+  gap: 8px;
+  min-height: 0;
+  z-index: 1;
+}
+
+#wm-dock.is-horizontal {
+  flex-direction: row;
+}
+
+#wm-dock.is-vertical {
+  flex-direction: column;
+}
+
+#wm-dock.is-empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.wm-empty {
+  color: var(--wm-muted);
+  text-align: center;
+  max-width: 360px;
+  line-height: 1.5;
+}
+
+.wm-group {
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--wm-surface);
+  border: 1px solid var(--wm-line);
+  border-radius: var(--wm-radius);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.wm-group.is-solo {
+  flex: 1 1 auto;
+}
+
+.wm-group.is-focused {
+  border-color: #9db0e8;
+  box-shadow: 0 0 0 2px var(--wm-accent-soft);
+}
+
+.wm-tabstrip {
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: 4px;
   height: var(--wm-strip-h);
-  padding: 6px 8px 0;
+  padding: 6px 6px 0;
   background: linear-gradient(180deg, #eef2f8 0%, var(--wm-strip) 100%);
   border-bottom: 1px solid var(--wm-line);
   user-select: none;
-}
-
-.wm-tab,
-.wm-popup .wm-chrome,
-.wm-resize {
+  flex: 0 0 auto;
   touch-action: none;
 }
 
-#wm-tabs {
+.wm-tabs {
   display: flex;
   align-items: flex-end;
   gap: 4px;
@@ -81,19 +124,20 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 220px;
-  min-width: 110px;
-  height: 34px;
-  padding: 0 8px 0 12px;
+  max-width: 200px;
+  min-width: 96px;
+  height: 30px;
+  padding: 0 6px 0 10px;
   border: 1px solid transparent;
   border-bottom: none;
-  border-radius: 10px 10px 0 0;
+  border-radius: 8px 8px 0 0;
   background: transparent;
   color: var(--wm-muted);
   cursor: grab;
   flex: 0 0 auto;
   font: inherit;
   text-align: left;
+  touch-action: none;
 }
 
 .wm-tab:hover {
@@ -121,23 +165,13 @@ body {
   box-shadow: inset -3px 0 0 var(--wm-accent);
 }
 
+.wm-tabstrip.drop-into {
+  box-shadow: inset 0 -3px 0 var(--wm-accent);
+}
+
 body.is-dragging-tab,
 body.is-dragging-tab .wm-tab {
   cursor: grabbing;
-}
-
-.wm-tab.is-docked::after,
-.wm-tab.is-popup::after {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--wm-accent);
-  flex: 0 0 auto;
-}
-
-.wm-tab.is-popup::after {
-  background: #c27803;
 }
 
 .wm-tab-title {
@@ -151,10 +185,10 @@ body.is-dragging-tab .wm-tab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -169,187 +203,58 @@ body.is-dragging-tab .wm-tab {
   opacity: 1;
 }
 
-#wm-add-window {
+.wm-add {
   flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  margin-bottom: 0;
+  width: 30px;
+  height: 30px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--wm-ink);
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
 }
 
-#wm-add-window:hover {
+.wm-add:hover {
   background: var(--wm-accent-soft);
   border-color: #b7c6ef;
   color: var(--wm-accent);
 }
 
-/* ——— Stage ——— */
-#wm-stage {
+.wm-body {
+  flex: 1 1 auto;
+  min-height: 0;
   position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
-  background:
-    radial-gradient(900px 420px at 10% 0%, #ffffff 0%, transparent 55%),
-    var(--wm-bg);
-  overflow: hidden;
-}
-
-#wm-dock {
-  position: absolute;
-  inset: 8px;
-  display: flex;
-  gap: 8px;
-  min-height: 0;
-  z-index: var(--wm-z-stage);
-}
-
-#wm-dock.is-horizontal {
-  flex-direction: row;
-}
-
-#wm-dock.is-vertical {
-  flex-direction: column;
-}
-
-#wm-dock.is-empty {
-  align-items: center;
-  justify-content: center;
-}
-
-.wm-empty {
-  color: var(--wm-muted);
-  text-align: center;
-  max-width: 360px;
-  padding: 24px;
-  line-height: 1.5;
-}
-
-.wm-empty strong {
-  color: var(--wm-ink);
-}
-
-.wm-pane {
-  position: relative;
-  flex: 1 1 50%;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--wm-surface);
-  border: 1px solid var(--wm-line);
-  border-radius: var(--wm-radius);
-  overflow: hidden;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
-}
-
-.wm-pane.is-solo {
-  flex: 1 1 auto;
-}
-
-.wm-pane.is-focused {
-  border-color: #9db0e8;
-  box-shadow: 0 0 0 2px var(--wm-accent-soft);
-}
-
-.wm-chrome {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: var(--wm-chrome-h);
-  padding: 0 8px 0 12px;
-  background: #f4f6fa;
-  border-bottom: 1px solid var(--wm-line);
-  cursor: default;
-  flex: 0 0 auto;
-}
-
-.wm-chrome-title {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  font-size: 12px;
-}
-
-.wm-return {
-  margin-left: auto;
-}
-
-.wm-chrome-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--wm-line);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--wm-ink);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.wm-chrome-btn:hover {
-  border-color: #b7c6ef;
-  background: var(--wm-accent-soft);
-  color: var(--wm-accent);
-}
-
-.wm-chrome-btn.wm-close:hover {
-  border-color: #f0b4b0;
-  background: #fdecec;
-  color: var(--wm-danger);
 }
 
 .wm-frame {
-  flex: 1 1 auto;
   width: 100%;
   height: 100%;
   border: 0;
   background: #fff;
-  min-height: 0;
 }
 
-/* ——— Popups ——— */
 #wm-popups {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: var(--wm-z-popup-base);
+  z-index: 200;
 }
 
 .wm-popup {
   position: absolute;
-  display: flex;
-  flex-direction: column;
-  min-width: 280px;
-  min-height: 200px;
-  background: var(--wm-surface);
-  border: 1px solid var(--wm-line);
-  border-radius: var(--wm-radius);
-  box-shadow: var(--wm-shadow);
-  overflow: hidden;
   pointer-events: auto;
-}
-
-.wm-popup .wm-chrome {
-  cursor: move;
-  background: #eef2fb;
+  box-shadow: var(--wm-shadow);
 }
 
 .wm-popup.is-top {
   border-color: #9db0e8;
   box-shadow: var(--wm-shadow), 0 0 0 2px var(--wm-accent-soft);
+}
+
+.wm-popup .wm-tabstrip {
+  cursor: move;
 }
 
 .wm-resize {
@@ -359,17 +264,16 @@ body.is-dragging-tab .wm-tab {
   width: 16px;
   height: 16px;
   cursor: nwse-resize;
+  touch-action: none;
   background:
     linear-gradient(135deg, transparent 50%, var(--wm-line) 50%, var(--wm-line) 60%, transparent 60%),
     linear-gradient(135deg, transparent 68%, var(--wm-line) 68%, var(--wm-line) 78%, transparent 78%);
 }
 
-/* ——— Dock preview overlay ——— */
 #wm-dock-preview {
   position: absolute;
-  inset: 8px;
   display: none;
-  z-index: var(--wm-z-preview);
+  z-index: 400;
   pointer-events: none;
 }
 
@@ -380,7 +284,7 @@ body.is-dragging-tab .wm-tab {
 #wm-drop-catcher {
   position: absolute;
   inset: 0;
-  z-index: calc(var(--wm-z-preview) - 1);
+  z-index: 399;
   display: none;
 }
 
@@ -408,6 +312,12 @@ body.is-dragging-tab .wm-tab {
   border-color: rgba(194, 120, 3, 0.45);
 }
 
+#wm-dock-preview.is-visible .wm-preview-zone[data-zone="pane"] {
+  inset: 0;
+  background: rgba(30, 79, 215, 0.08);
+  border-color: var(--wm-accent);
+}
+
 #wm-dock-preview.is-visible .wm-preview-label {
   opacity: 0.55;
 }
@@ -416,8 +326,17 @@ body.is-dragging-tab .wm-tab {
   position: absolute;
   border: 2px dashed transparent;
   border-radius: 10px;
-  background: transparent;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  display: none;
+}
+
+#wm-dock-preview.is-split .wm-preview-zone[data-zone="left"],
+#wm-dock-preview.is-split .wm-preview-zone[data-zone="right"],
+#wm-dock-preview.is-split .wm-preview-zone[data-zone="top"],
+#wm-dock-preview.is-split .wm-preview-zone[data-zone="bottom"],
+#wm-dock-preview.is-split .wm-preview-zone[data-zone="center"],
+#wm-dock-preview.is-move .wm-preview-zone[data-zone="pane"],
+#wm-dock-preview.is-move .wm-preview-zone[data-zone="center"] {
+  display: block;
 }
 
 .wm-preview-zone[data-zone="left"] {
@@ -456,13 +375,13 @@ body.is-dragging-tab .wm-tab {
 }
 
 .wm-preview-zone.is-active {
-  background: rgba(30, 79, 215, 0.16);
-  border-color: var(--wm-accent);
+  background: rgba(30, 79, 215, 0.16) !important;
+  border-color: var(--wm-accent) !important;
 }
 
 .wm-preview-zone.is-active[data-zone="center"] {
-  background: rgba(194, 120, 3, 0.16);
-  border-color: #c27803;
+  background: rgba(194, 120, 3, 0.16) !important;
+  border-color: #c27803 !important;
 }
 
 .wm-preview-label {
@@ -476,7 +395,6 @@ body.is-dragging-tab .wm-tab {
   color: #fff;
   font-size: 11px;
   font-weight: 650;
-  letter-spacing: 0.02em;
   white-space: nowrap;
   opacity: 0;
 }
@@ -485,13 +403,11 @@ body.is-dragging-tab .wm-tab {
   opacity: 1;
 }
 
-/* Ghost tab while dragging over stage */
 #wm-drag-ghost {
   position: fixed;
-  z-index: var(--wm-z-drag);
+  z-index: 500;
   display: none;
   align-items: center;
-  gap: 6px;
   height: 32px;
   padding: 0 12px;
   border-radius: 8px;
@@ -500,7 +416,6 @@ body.is-dragging-tab .wm-tab {
   box-shadow: var(--wm-shadow);
   pointer-events: none;
   font-weight: 600;
-  color: var(--wm-ink);
 }
 
 #wm-drag-ghost.is-visible {
@@ -509,11 +424,7 @@ body.is-dragging-tab .wm-tab {
 
 @media (max-width: 720px) {
   .wm-tab {
-    min-width: 88px;
+    min-width: 80px;
     max-width: 140px;
-  }
-
-  .wm-chrome-btn.wm-return span {
-    display: none;
   }
 }
