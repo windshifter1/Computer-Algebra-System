@@ -88,10 +88,12 @@ html, body {
   top: 12px;
   left: 12px;
   z-index: 3;
+  box-sizing: border-box;
   min-width: 240px;
   width: min(300px, calc(100% - 24px));
   max-height: calc(100% - 24px);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid #c9d1de;
   border-radius: 12px;
@@ -155,11 +157,13 @@ html, body {
 .g-row input[type="number"],
 .edit-fit input,
 .range-row input {
+  box-sizing: border-box;
   height: 26px;
   border: 1px solid #c9d1de;
   border-radius: 6px;
   padding: 0 6px;
   font: inherit;
+  max-width: 100%;
 }
 
 .g-row input[type="number"] {
@@ -268,6 +272,7 @@ html, body {
 
 .step-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: 8px;
