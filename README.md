@@ -1,6 +1,6 @@
-##This version (visual improvements) [HERE](https://windshifter1.github.io/Computer-Algebra-System/Algebra.html)
+### This version (visual improvements) [HERE](https://windshifter1.github.io/Computer-Algebra-System/Algebra.html)
 
-##Original author's version (most up to date) [HERE](https://mathsfromnothing.au/wp-content/uploads/algebraprogramnew/index.html)
+### Original author's version (most up to date) [HERE](https://mathsfromnothing.au/wp-content/uploads/algebraprogramnew/index.html)
 
 ___
 
