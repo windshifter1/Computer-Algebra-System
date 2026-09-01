@@ -314,6 +314,8 @@ button:active {
   position: fixed;
   z-index: 60;
   min-width: 220px;
+  display: flex;
+  flex-direction: column;
   background: rgba(255, 255, 255, 0.96) !important;
   color: var(--ink) !important;
   cursor: pointer;
@@ -345,11 +347,21 @@ button:active {
 }
 
 #opmenu > p.op-graph {
-  margin-top: 4px !important;
+  position: sticky;
+  bottom: 0;
+  margin-top: 6px !important;
   border-top: 1px solid var(--line);
-  border-radius: 0 0 8px 8px !important;
-  font-weight: 650;
+  border-radius: 8px !important;
+  font-weight: 700;
   color: var(--accent);
+  background: #fff !important;
+  z-index: 3;
+  box-shadow: 0 -10px 14px rgba(255, 255, 255, 0.95);
+}
+
+#opmenu > p.op-graph:hover {
+  background: var(--accent) !important;
+  color: #fff !important;
 }
 
 /* Math preview */

@@ -1,41 +1,10 @@
 (function (global) {
   "use strict";
 
-  var BLOCKED = { diff: 1, int: 1 };
-  var CONST_NAMES = { "π": 1, pi: 1, e: 1, i: 1 };
-
-  function walk(node, onNode) {
-    if (Array.isArray(node)) {
-      onNode(node);
-      for (var i = 1; i < node.length; i++) walk(node[i], onNode);
-    }
-  }
-
-  function collectVars(node, out) {
-    if (node === undefined || node === null || node === "") return;
-    if (!Array.isArray(node)) {
-      if (typeof node === "string" && isNaN(node) && !CONST_NAMES[node]) out[node] = 1;
-      return;
-    }
-    for (var i = 1; i < node.length; i++) collectVars(node[i], out);
-  }
-
   function casIsGraphable(eq) {
     if (eq === undefined || eq === "" || eq === null) return false;
-    var blocked = false;
-    if (Array.isArray(eq)) {
-      walk(eq, function (n) {
-        if (BLOCKED[n[0]]) blocked = true;
-      });
-    } else if (typeof eq === "string") {
-      if (!isNaN(eq) || CONST_NAMES[eq]) return false;
-    } else {
-      return false;
-    }
-    if (blocked) return false;
-    var vars = {};
-    collectVars(eq, vars);
-    return Object.keys(vars).length > 0;
+    if (Array.isArray(eq) && eq.length === 0) return false;
+    return true;
   }
 
   function casOpenGraph(eq) {
