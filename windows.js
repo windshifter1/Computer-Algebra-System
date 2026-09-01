@@ -140,7 +140,10 @@
     if (iframe) return iframe;
     iframe = document.createElement("iframe");
     iframe.className = "wm-frame";
-    iframe.src = "Algebra.html";
+    iframe.src =
+      tab.kind === "graph" && tab.graphId
+        ? "Graph.html?g=" + encodeURIComponent(tab.graphId)
+        : "Algebra.html";
     iframe.title = tab.title;
     iframe.addEventListener("load", function () {
       try {
@@ -423,6 +426,27 @@
       id: tabUid(),
       title: "Window " + (state.nextTab - 1),
       groupId: gid,
+    };
+    state.tabs.push(tab);
+    state.groups[gid].activeId = tab.id;
+    state.focusedGroupId = gid;
+    render();
+  }
+
+  function addGraphTab(graphId, title) {
+    let gid = state.focusedGroupId;
+    if (!gid || !state.groups[gid]) gid = state.dockIds[0];
+    if (!gid || !state.groups[gid]) {
+      const g = createGroup("dock");
+      gid = g.id;
+      state.dockIds = [gid];
+    }
+    const tab = {
+      id: tabUid(),
+      title: title || "Graph",
+      groupId: gid,
+      kind: "graph",
+      graphId: graphId,
     };
     state.tabs.push(tab);
     state.groups[gid].activeId = tab.id;
@@ -784,6 +808,11 @@
     els.catcher = document.getElementById("wm-drop-catcher");
     els.pool = document.getElementById("wm-pool");
     els.ghost = document.getElementById("wm-drag-ghost");
+
+    window.addEventListener("message", function (e) {
+      if (!e.data || e.data.type !== "cas-open-graph" || !e.data.id) return;
+      addGraphTab(e.data.id, e.data.title || "Graph");
+    });
 
     if (!load()) {
       const g = createGroup("dock");

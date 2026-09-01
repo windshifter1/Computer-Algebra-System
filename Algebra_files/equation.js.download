@@ -1457,7 +1457,10 @@ class equation{
                 var p=this.getparent(node);
                 optionstext.push('<p>Copy</p>');
                 options.push(()=>{tempdisableallclick();THIS.copyflat(p!==undefined&&(p[0]==='-')?p:node,menu);});
-                //#endregion     
+                //#endregion
+                if(typeof casPushGraphMenu==='function'){
+                    casPushGraphMenu(THIS,optionstext,options,menu);
+                }
                 //#region fill menu with options
                 menu.innerHTML='';
                 for(let i=0;i<optionstext.length;i++){
@@ -1613,6 +1616,9 @@ class equation{
                 optionstext.push('<p>Copy all as latex code</p>');
                 options.push(()=>{tempdisableallclick();THIS.copylatex(this.equation,menu);});
                 //#endregion
+                if(typeof casPushGraphMenu==='function'){
+                    casPushGraphMenu(THIS,optionstext,options,menu);
+                }
                 //#region fill menu with options
                 menu.innerHTML='';
                 for(let i=0;i<optionstext.length;i++){
