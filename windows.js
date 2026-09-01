@@ -481,18 +481,17 @@
       return;
     }
     delete state.popups[id];
-    detachFromDock(id);
-    const horiz = zone === "left" || zone === "right";
-    state.dock.orientation = horiz ? "horizontal" : "vertical";
+    const others = [];
+    if (state.dock.primary && state.dock.primary !== id) others.push(state.dock.primary);
+    if (state.dock.secondary && state.dock.secondary !== id) others.push(state.dock.secondary);
     const first = zone === "left" || zone === "top";
-    if (!state.dock.primary) {
+    state.dock.orientation = zone === "left" || zone === "right" ? "horizontal" : "vertical";
+    if (first) {
       state.dock.primary = id;
-      state.dock.secondary = null;
-    } else if (first) {
-      state.dock.secondary = state.dock.primary;
-      state.dock.primary = id;
+      state.dock.secondary = others[0] || null;
     } else {
-      state.dock.secondary = id;
+      state.dock.primary = others[0] || id;
+      state.dock.secondary = others[0] ? id : null;
     }
     render();
   }
@@ -637,6 +636,7 @@
     const tabs = els.tabs.querySelectorAll(".wm-tab");
     for (let i = 0; i < tabs.length; i++) {
       const tab = tabs[i];
+      if (dragging && tab.dataset.windowId === dragging.id) continue;
       const rect = tab.getBoundingClientRect();
       if (
         clientX >= rect.left &&
@@ -654,8 +654,15 @@
     if (!dragging) return;
     moveGhost(clientX, clientY);
     clearTabDropMarks();
+    const zone = dragging.canDock ? zoneFromPoint(clientX, clientY) : null;
+    if (zone) {
+      dragging.overTabId = null;
+      dragging.zone = zone;
+      showPreview(zone);
+      return;
+    }
     const tab = tabAtPoint(clientX, clientY);
-    if (tab && tab.dataset.windowId !== dragging.id) {
+    if (tab) {
       const rect = tab.getBoundingClientRect();
       dragging.placeAfter = clientX > rect.left + rect.width / 2;
       dragging.overTabId = tab.dataset.windowId;
@@ -665,13 +672,8 @@
       return;
     }
     dragging.overTabId = null;
-    if (dragging.canDock) {
-      dragging.zone = zoneFromPoint(clientX, clientY);
-      showPreview(dragging.zone);
-    } else {
-      dragging.zone = null;
-      showPreview(null);
-    }
+    dragging.zone = null;
+    showPreview(null);
   }
 
   function finishDrag() {
