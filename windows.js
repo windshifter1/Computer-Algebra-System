@@ -16,8 +16,7 @@
   };
 
   const els = {};
-  const shells = new Map();
-  let dragging = null;
+  let ignoreNextClick = false;
 
   function uid() {
     return "w" + state.nextId++;
@@ -158,19 +157,19 @@
     shell.appendChild(iframe);
     shell.appendChild(resize);
 
-    chrome.addEventListener("mousedown", function (e) {
+    chrome.addEventListener("pointerdown", function (e) {
       if (e.target.closest("button")) return;
       if (shell.classList.contains("wm-popup")) startPopupMove(e, id);
       else focusWindow(id);
     });
 
-    resize.addEventListener("mousedown", function (e) {
+    resize.addEventListener("pointerdown", function (e) {
       e.preventDefault();
       e.stopPropagation();
       startPopupResize(e, id);
     });
 
-    shell.addEventListener("mousedown", function () {
+    shell.addEventListener("pointerdown", function () {
       if (shell.classList.contains("wm-popup")) bringPopupToFront(id);
       else focusWindow(id);
     });
@@ -242,7 +241,6 @@
       btn.setAttribute("role", "tab");
       btn.setAttribute("aria-selected", tab.id === state.activeId ? "true" : "false");
       btn.tabIndex = 0;
-      btn.draggable = true;
       if (tab.id === state.activeId) btn.classList.add("is-active");
       if (isDocked(tab.id)) btn.classList.add("is-docked");
       if (isPopup(tab.id)) btn.classList.add("is-popup");
@@ -535,6 +533,7 @@
     const shell = shells.get(id);
     if (!p || !shell) return;
     const start = { x: e.clientX, y: e.clientY, left: p.x, top: p.y };
+    const target = e.currentTarget;
     function onMove(ev) {
       p.x = start.left + (ev.clientX - start.x);
       p.y = start.top + (ev.clientY - start.y);
@@ -543,12 +542,17 @@
       shell.style.top = p.y + "px";
     }
     function onUp() {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      target.removeEventListener("pointercancel", onUp);
       save();
     }
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    try {
+      target.setPointerCapture(e.pointerId);
+    } catch (err) {}
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+    target.addEventListener("pointercancel", onUp);
   }
 
   function startPopupResize(e, id) {
@@ -559,6 +563,7 @@
     const shell = shells.get(id);
     if (!p || !shell) return;
     const start = { x: e.clientX, y: e.clientY, w: p.width, h: p.height };
+    const target = e.currentTarget;
     function onMove(ev) {
       p.width = start.w + (ev.clientX - start.x);
       p.height = start.h + (ev.clientY - start.y);
@@ -567,19 +572,20 @@
       shell.style.height = p.height + "px";
     }
     function onUp() {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      target.removeEventListener("pointercancel", onUp);
       save();
     }
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    try {
+      target.setPointerCapture(e.pointerId);
+    } catch (err) {}
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+    target.addEventListener("pointercancel", onUp);
   }
 
-  function startTabDrag(e, tabEl) {
-    if (e.target.closest(".wm-tab-close")) {
-      e.preventDefault();
-      return;
-    }
+  function beginTabDrag(tabEl, clientX, clientY) {
     const id = tabEl.dataset.windowId;
     dragging = {
       id: id,
@@ -587,25 +593,15 @@
       overTabId: null,
       placeAfter: false,
       zone: null,
+      suppressClick: true,
     };
-    e.dataTransfer.effectAllowed = "move";
-    try {
-      e.dataTransfer.setData("text/plain", id);
-    } catch (err) {}
-    if (els.dragImage) {
-      try {
-        e.dataTransfer.setDragImage(els.dragImage, 0, 0);
-      } catch (err) {}
-    }
     tabEl.classList.add("is-dragging");
     document.body.classList.add("is-dragging-tab");
     els.ghost.textContent = tabEl.querySelector(".wm-tab-title").textContent;
     els.ghost.classList.add("is-visible");
-    moveGhost(e.clientX, e.clientY);
-    if (dragging.canDock) {
-      els.catcher.classList.add("is-visible");
-      els.preview.classList.add("is-visible");
-    }
+    moveGhost(clientX, clientY);
+    if (dragging.canDock) els.catcher.classList.add("is-visible");
+    updateTabDrag(clientX, clientY);
   }
 
   function moveGhost(x, y) {
@@ -619,27 +615,40 @@
     });
   }
 
-  function onDragOver(e) {
-    if (!dragging) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    moveGhost(e.clientX, e.clientY);
+  function tabAtPoint(clientX, clientY) {
+    const tabs = els.tabs.querySelectorAll(".wm-tab");
+    for (let i = 0; i < tabs.length; i++) {
+      const tab = tabs[i];
+      const rect = tab.getBoundingClientRect();
+      if (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      ) {
+        return tab;
+      }
+    }
+    return null;
+  }
 
-    const tab = e.target.closest && e.target.closest(".wm-tab");
+  function updateTabDrag(clientX, clientY) {
+    if (!dragging) return;
+    moveGhost(clientX, clientY);
     clearTabDropMarks();
+    const tab = tabAtPoint(clientX, clientY);
     if (tab && tab.dataset.windowId !== dragging.id) {
       const rect = tab.getBoundingClientRect();
-      dragging.placeAfter = e.clientX > rect.left + rect.width / 2;
+      dragging.placeAfter = clientX > rect.left + rect.width / 2;
       dragging.overTabId = tab.dataset.windowId;
       tab.classList.add(dragging.placeAfter ? "drop-after" : "drop-before");
       dragging.zone = null;
       showPreview(null);
       return;
     }
-
     dragging.overTabId = null;
     if (dragging.canDock) {
-      dragging.zone = zoneFromPoint(e.clientX, e.clientY);
+      dragging.zone = zoneFromPoint(clientX, clientY);
       showPreview(dragging.zone);
     } else {
       dragging.zone = null;
@@ -662,21 +671,12 @@
       t.classList.remove("is-dragging");
     });
     if (!d) return;
+    ignoreNextClick = true;
     if (d.overTabId) {
       reorderTab(d.id, d.overTabId, d.placeAfter);
       return;
     }
     if (d.zone && d.canDock) applyDock(d.id, d.zone);
-  }
-
-  function onDrop(e) {
-    if (!dragging) return;
-    e.preventDefault();
-    finishDrag();
-  }
-
-  function onDragEnd() {
-    if (dragging) finishDrag();
   }
 
   function initDom() {
@@ -688,13 +688,16 @@
     els.catcher = document.getElementById("wm-drop-catcher");
     els.pool = document.getElementById("wm-pool");
     els.ghost = document.getElementById("wm-drag-ghost");
-    els.dragImage = document.createElement("canvas");
-    els.dragImage.width = 1;
-    els.dragImage.height = 1;
 
     document.getElementById("wm-add-window").addEventListener("click", addWindow);
 
     els.tabs.addEventListener("click", function (e) {
+      if (ignoreNextClick) {
+        ignoreNextClick = false;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       const close = e.target.closest(".wm-tab-close");
       const tab = e.target.closest(".wm-tab");
       if (!tab) return;
@@ -716,15 +719,39 @@
       }
     });
 
-    els.tabs.addEventListener("dragstart", function (e) {
+    els.tabs.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      if (e.target.closest(".wm-tab-close")) return;
       const tab = e.target.closest(".wm-tab");
       if (!tab) return;
-      startTabDrag(e, tab);
+      const pointerId = e.pointerId;
+      const start = { x: e.clientX, y: e.clientY, tab: tab, started: false };
+      function onMove(ev) {
+        const dx = ev.clientX - start.x;
+        const dy = ev.clientY - start.y;
+        if (!start.started) {
+          if (dx * dx + dy * dy < 36) return;
+          start.started = true;
+          beginTabDrag(start.tab, ev.clientX, ev.clientY);
+        }
+        updateTabDrag(ev.clientX, ev.clientY);
+      }
+      function onUp() {
+        tab.removeEventListener("pointermove", onMove);
+        tab.removeEventListener("pointerup", onUp);
+        tab.removeEventListener("pointercancel", onUp);
+        try {
+          tab.releasePointerCapture(pointerId);
+        } catch (err) {}
+        if (start.started) finishDrag();
+      }
+      try {
+        tab.setPointerCapture(pointerId);
+      } catch (err) {}
+      tab.addEventListener("pointermove", onMove);
+      tab.addEventListener("pointerup", onUp);
+      tab.addEventListener("pointercancel", onUp);
     });
-
-    document.addEventListener("dragover", onDragOver);
-    document.addEventListener("drop", onDrop);
-    document.addEventListener("dragend", onDragEnd);
 
     window.addEventListener("resize", function () {
       Object.keys(state.popups).forEach(function (id) {

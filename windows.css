@@ -59,6 +59,12 @@ body {
   user-select: none;
 }
 
+.wm-tab,
+.wm-popup .wm-chrome,
+.wm-resize {
+  touch-action: none;
+}
+
 #wm-tabs {
   display: flex;
   align-items: flex-end;
