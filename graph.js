@@ -946,8 +946,13 @@
     var vars = Object.keys(varMap);
     spec = classify(ast, vars);
     spec.params.forEach(function (name) {
-      values[name] = 1;
+      var initial = 1;
+      if (payload.values && isFinite(Number(payload.values[name]))) {
+        initial = Number(payload.values[name]);
+      }
+      values[name] = initial;
       ranges[name] = defaultRange();
+      values[name] = snapValue(name, values[name]);
     });
   }
 
