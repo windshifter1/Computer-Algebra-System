@@ -112,6 +112,7 @@ body > header a:last-child {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
+  align-items: center;
   overflow: auto;
   background: var(--bg-elevated);
   border: 1px solid var(--line);
@@ -143,6 +144,10 @@ body > header a:last-child {
 }
 
 #canvas {
+  display: block;
+  align-self: center;
+  margin-left: auto;
+  margin-right: auto;
   border-bottom: 2px solid var(--accent) !important;
   border-color: var(--accent) !important;
   border-radius: 4px 4px 0 0;
@@ -153,10 +158,12 @@ body > header a:last-child {
   display: flex;
   align-items: center;
   justify-content: center;
+  align-self: stretch;
   gap: 8px;
   flex-wrap: wrap;
   white-space: normal !important;
   margin: 8px 0 4px;
+  width: 100%;
 }
 
 #input {
@@ -184,16 +191,20 @@ body > header a:last-child {
 }
 
 #inputdisplay {
+  align-self: stretch;
   min-height: 1.6em;
   color: var(--ink);
   margin: 6px 0 2px;
+  text-align: center;
 }
 
 #errors {
+  align-self: stretch;
   color: var(--danger);
   font-size: 13px;
   min-height: 1.2em;
   margin: 2px 0 10px;
+  text-align: center;
 }
 
 #errors:empty {
@@ -239,14 +250,23 @@ button:active {
 }
 
 #keyboard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+  width: 100%;
   margin-top: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--line);
+  text-align: center;
 }
 
 #keyboard > div {
   display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 6px;
+  width: 100%;
   margin-top: 6px !important;
 }
 
