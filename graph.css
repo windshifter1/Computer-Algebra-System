@@ -152,6 +152,7 @@ html, body {
 
 .g-row input[type="range"] {
   width: 100%;
+  min-width: 0;
 }
 
 .g-row input[type="number"],
@@ -181,6 +182,7 @@ html, body {
   font-size: 11px;
   color: #5c6573;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .edit-row {
