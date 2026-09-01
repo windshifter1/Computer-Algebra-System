@@ -8,12 +8,46 @@
 </head>
 <body>
     <canvas id="plot"></canvas>
+    <div id="coords">x: — &nbsp; y: —</div>
+    <div id="scale">tick = 1</div>
+    <div id="zoom-tools">
+        <button type="button" id="zoom-in" title="Zoom in">+</button>
+        <button type="button" id="zoom-out" title="Zoom out">−</button>
+        <button type="button" id="zoom-home" title="Reset view">⌂</button>
+    </div>
     <div id="panel">
-        <div id="panel-bar">Variables</div>
+        <div id="panel-bar">
+            <span>Variables</span>
+            <button type="button" id="panel-edit" title="Edit graph settings">Edit</button>
+        </div>
         <div id="panel-eq"></div>
         <div id="panel-sliders"></div>
-        <div id="panel-hint">Drag the header to move. Scroll on the plot to zoom. Drag the plot to pan.</div>
+        <div id="panel-hint">Scroll to zoom · drag to pan · axes stay 1:1</div>
     </div>
-    <script src="./graph.js"></script>
+    <div id="edit" hidden>
+        <div id="edit-bar">
+            <span>Graph settings</span>
+            <button type="button" id="edit-close">Done</button>
+        </div>
+        <label class="edit-row">
+            <span>Line color</span>
+            <input type="color" id="edit-color" value="#1e4fd7">
+        </label>
+        <div class="edit-block">
+            <div class="edit-label">Fit origin and a value</div>
+            <p class="edit-help">Enter an x and/or y so the origin and that value stay in view. Leave a field blank to fit only the other axis.</p>
+            <div class="edit-fit">
+                <label>x <input type="number" id="fit-x" step="any" placeholder="optional"></label>
+                <label>y <input type="number" id="fit-y" step="any" placeholder="optional"></label>
+                <button type="button" id="fit-go">Fit view</button>
+            </div>
+        </div>
+        <div class="edit-block" id="edit-ranges-wrap">
+            <div class="edit-label">Slider ranges</div>
+            <p class="edit-help">Set each variable’s min and max. Stepped sliders (off by default) snap to a custom step size.</p>
+            <div id="edit-ranges"></div>
+        </div>
+    </div>
+    <script src="./graph.js?v=4"></script>
 </body>
 </html>
