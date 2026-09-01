@@ -1,0 +1,502 @@
+/* Window manager shell — tab strip, docking, popups */
+
+:root {
+  --wm-strip-h: 44px;
+  --wm-chrome-h: 36px;
+  --wm-bg: #e8ecf3;
+  --wm-strip: #dfe5ef;
+  --wm-surface: #ffffff;
+  --wm-ink: #141821;
+  --wm-muted: #5c6573;
+  --wm-line: #c9d1de;
+  --wm-accent: #1e4fd7;
+  --wm-accent-soft: #e8eefc;
+  --wm-danger: #b42318;
+  --wm-shadow: 0 8px 28px rgba(16, 24, 40, 0.14);
+  --wm-radius: 12px;
+  --wm-font: "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+  --wm-z-strip: 100;
+  --wm-z-stage: 1;
+  --wm-z-popup-base: 200;
+  --wm-z-preview: 400;
+  --wm-z-drag: 500;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--wm-bg);
+  color: var(--wm-ink);
+  font-family: var(--wm-font);
+  font-size: 13px;
+}
+
+#wm-app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 100%;
+}
+
+/* ——— Tab strip (browser-like) ——— */
+#wm-tabstrip {
+  z-index: var(--wm-z-strip);
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  height: var(--wm-strip-h);
+  padding: 6px 8px 0;
+  background: linear-gradient(180deg, #eef2f8 0%, var(--wm-strip) 100%);
+  border-bottom: 1px solid var(--wm-line);
+  user-select: none;
+}
+
+#wm-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.wm-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  min-width: 110px;
+  height: 34px;
+  padding: 0 8px 0 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  background: transparent;
+  color: var(--wm-muted);
+  cursor: grab;
+  flex: 0 0 auto;
+  font: inherit;
+  text-align: left;
+}
+
+.wm-tab:hover {
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--wm-ink);
+}
+
+.wm-tab.is-active {
+  background: var(--wm-surface);
+  color: var(--wm-ink);
+  border-color: var(--wm-line);
+  box-shadow: 0 -1px 0 var(--wm-surface);
+  font-weight: 600;
+}
+
+.wm-tab.is-dragging {
+  opacity: 0.35;
+}
+
+.wm-tab.drop-before {
+  box-shadow: inset 3px 0 0 var(--wm-accent);
+}
+
+.wm-tab.drop-after {
+  box-shadow: inset -3px 0 0 var(--wm-accent);
+}
+
+body.is-dragging-tab,
+body.is-dragging-tab .wm-tab {
+  cursor: grabbing;
+}
+
+.wm-tab.is-docked::after,
+.wm-tab.is-popup::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wm-accent);
+  flex: 0 0 auto;
+}
+
+.wm-tab.is-popup::after {
+  background: #c27803;
+}
+
+.wm-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+}
+
+.wm-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.wm-tab-close:hover {
+  background: rgba(180, 35, 24, 0.12);
+  color: var(--wm-danger);
+  opacity: 1;
+}
+
+#wm-add-window {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--wm-ink);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#wm-add-window:hover {
+  background: var(--wm-accent-soft);
+  border-color: #b7c6ef;
+  color: var(--wm-accent);
+}
+
+/* ——— Stage ——— */
+#wm-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background:
+    radial-gradient(900px 420px at 10% 0%, #ffffff 0%, transparent 55%),
+    var(--wm-bg);
+  overflow: hidden;
+}
+
+#wm-dock {
+  position: absolute;
+  inset: 8px;
+  display: flex;
+  gap: 8px;
+  min-height: 0;
+  z-index: var(--wm-z-stage);
+}
+
+#wm-dock.is-horizontal {
+  flex-direction: row;
+}
+
+#wm-dock.is-vertical {
+  flex-direction: column;
+}
+
+#wm-dock.is-empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.wm-empty {
+  color: var(--wm-muted);
+  text-align: center;
+  max-width: 360px;
+  padding: 24px;
+  line-height: 1.5;
+}
+
+.wm-empty strong {
+  color: var(--wm-ink);
+}
+
+.wm-pane {
+  position: relative;
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--wm-surface);
+  border: 1px solid var(--wm-line);
+  border-radius: var(--wm-radius);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.wm-pane.is-solo {
+  flex: 1 1 auto;
+}
+
+.wm-pane.is-focused {
+  border-color: #9db0e8;
+  box-shadow: 0 0 0 2px var(--wm-accent-soft);
+}
+
+.wm-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--wm-chrome-h);
+  padding: 0 8px 0 12px;
+  background: #f4f6fa;
+  border-bottom: 1px solid var(--wm-line);
+  cursor: default;
+  flex: 0 0 auto;
+}
+
+.wm-chrome-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.wm-return {
+  margin-left: auto;
+}
+
+.wm-chrome-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--wm-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--wm-ink);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wm-chrome-btn:hover {
+  border-color: #b7c6ef;
+  background: var(--wm-accent-soft);
+  color: var(--wm-accent);
+}
+
+.wm-chrome-btn.wm-close:hover {
+  border-color: #f0b4b0;
+  background: #fdecec;
+  color: var(--wm-danger);
+}
+
+.wm-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+  min-height: 0;
+}
+
+/* ——— Popups ——— */
+#wm-popups {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--wm-z-popup-base);
+}
+
+.wm-popup {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 280px;
+  min-height: 200px;
+  background: var(--wm-surface);
+  border: 1px solid var(--wm-line);
+  border-radius: var(--wm-radius);
+  box-shadow: var(--wm-shadow);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.wm-popup .wm-chrome {
+  cursor: move;
+  background: #eef2fb;
+}
+
+.wm-popup.is-top {
+  border-color: #9db0e8;
+  box-shadow: var(--wm-shadow), 0 0 0 2px var(--wm-accent-soft);
+}
+
+.wm-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 50%, var(--wm-line) 50%, var(--wm-line) 60%, transparent 60%),
+    linear-gradient(135deg, transparent 68%, var(--wm-line) 68%, var(--wm-line) 78%, transparent 78%);
+}
+
+/* ——— Dock preview overlay ——— */
+#wm-dock-preview {
+  position: absolute;
+  inset: 8px;
+  display: none;
+  z-index: var(--wm-z-preview);
+  pointer-events: none;
+}
+
+#wm-dock-preview.is-visible {
+  display: block;
+}
+
+#wm-drop-catcher {
+  position: absolute;
+  inset: 0;
+  z-index: calc(var(--wm-z-preview) - 1);
+  display: none;
+}
+
+#wm-drop-catcher.is-visible {
+  display: block;
+}
+
+#wm-pool {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#wm-dock-preview.is-visible .wm-preview-zone {
+  border-color: rgba(30, 79, 215, 0.22);
+}
+
+.wm-preview-zone {
+  position: absolute;
+  border: 2px dashed transparent;
+  border-radius: 10px;
+  background: transparent;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+.wm-preview-zone[data-zone="left"] {
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 28%;
+}
+
+.wm-preview-zone[data-zone="right"] {
+  right: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 28%;
+}
+
+.wm-preview-zone[data-zone="top"] {
+  left: 18%;
+  right: 18%;
+  top: 0;
+  height: 24%;
+}
+
+.wm-preview-zone[data-zone="bottom"] {
+  left: 18%;
+  right: 18%;
+  bottom: 0;
+  height: 24%;
+}
+
+.wm-preview-zone[data-zone="center"] {
+  left: 30%;
+  right: 30%;
+  top: 28%;
+  bottom: 28%;
+}
+
+.wm-preview-zone.is-active {
+  background: rgba(30, 79, 215, 0.16);
+  border-color: var(--wm-accent);
+}
+
+.wm-preview-zone.is-active[data-zone="center"] {
+  background: rgba(194, 120, 3, 0.16);
+  border-color: #c27803;
+}
+
+.wm-preview-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(20, 24, 33, 0.82);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  opacity: 0;
+}
+
+.wm-preview-zone.is-active .wm-preview-label {
+  opacity: 1;
+}
+
+/* Ghost tab while dragging over stage */
+#wm-drag-ghost {
+  position: fixed;
+  z-index: var(--wm-z-drag);
+  display: none;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--wm-surface);
+  border: 1px solid var(--wm-accent);
+  box-shadow: var(--wm-shadow);
+  pointer-events: none;
+  font-weight: 600;
+  color: var(--wm-ink);
+}
+
+#wm-drag-ghost.is-visible {
+  display: flex;
+}
+
+@media (max-width: 720px) {
+  .wm-tab {
+    min-width: 88px;
+    max-width: 140px;
+  }
+
+  .wm-chrome-btn.wm-return span {
+    display: none;
+  }
+}

@@ -386,6 +386,17 @@ body > button[style*="z-index: 101"] {
   }
 }
 
+/* Compact chrome when the calculator is hosted inside a window pane */
+html.cas-embedded body > header.noprint,
+html.cas-embedded body > header {
+  display: none !important;
+}
+
+html.cas-embedded #viewwindow {
+  margin: 10px 10px 8px !important;
+  height: calc(100dvh - 18px) !important;
+}
+
 @media print {
   body,
   #viewwindow,
