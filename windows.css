@@ -386,6 +386,7 @@ body.is-dragging-tab .wm-tab {
 
 #wm-drop-catcher.is-visible {
   display: block;
+  cursor: grabbing;
 }
 
 #wm-pool {
@@ -398,7 +399,17 @@ body.is-dragging-tab .wm-tab {
 }
 
 #wm-dock-preview.is-visible .wm-preview-zone {
-  border-color: rgba(30, 79, 215, 0.22);
+  background: rgba(30, 79, 215, 0.07);
+  border-color: rgba(30, 79, 215, 0.4);
+}
+
+#wm-dock-preview.is-visible .wm-preview-zone[data-zone="center"] {
+  background: rgba(194, 120, 3, 0.08);
+  border-color: rgba(194, 120, 3, 0.45);
+}
+
+#wm-dock-preview.is-visible .wm-preview-label {
+  opacity: 0.55;
 }
 
 .wm-preview-zone {

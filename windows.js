@@ -17,6 +17,8 @@
 
   const els = {};
   let ignoreNextClick = false;
+  const shells = new Map();
+  let dragging = null;
 
   function uid() {
     return "w" + state.nextId++;
@@ -310,6 +312,7 @@
         els.pool.appendChild(shells.get(t.id));
       }
     });
+    syncTitles();
   }
 
   function render() {
@@ -318,7 +321,19 @@
     save();
   }
 
+  function syncTitles() {
+    state.tabs.forEach(function (tab) {
+      const shell = shells.get(tab.id);
+      if (!shell) return;
+      const titleEl = shell.querySelector(".wm-chrome-title");
+      const iframe = shell.querySelector("iframe");
+      if (titleEl) titleEl.textContent = tab.title;
+      if (iframe) iframe.title = tab.title;
+    });
+  }
+
   function updateFocusClasses() {
+    syncTitles();
     document.querySelectorAll(".wm-pane, .wm-popup").forEach(function (el) {
       const id = el.dataset.windowId;
       el.classList.toggle("is-focused", id === state.activeId && el.classList.contains("wm-pane"));
@@ -449,10 +464,13 @@
   }
 
   function showPreview(zone) {
-    const overStage = !!(dragging && dragging.canDock && !dragging.overTabId);
-    els.preview.classList.toggle("is-visible", overStage);
+    const show = !!(dragging && dragging.canDock);
+    els.preview.classList.toggle("is-visible", show);
     els.preview.querySelectorAll(".wm-preview-zone").forEach(function (el) {
-      el.classList.toggle("is-active", overStage && el.getAttribute("data-zone") === zone);
+      el.classList.toggle(
+        "is-active",
+        show && !dragging.overTabId && el.getAttribute("data-zone") === zone
+      );
     });
   }
 
