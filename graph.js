@@ -52,8 +52,14 @@
       return p;
     }
     if (op === "/") {
+      a = evalAst(node[1], env);
       b = evalAst(node[2], env);
-      return b === 0 ? NaN : evalAst(node[1], env) / b;
+      if (!isFinite(a) || !isFinite(b) || b === 0) return NaN;
+      // Near a vertical asymptote the denominator can be tiny but nonzero;
+      // treat those samples as undefined so the curve does not bridge the hole.
+      if (Math.abs(b) < 1e-12 * Math.max(1, Math.abs(a))) return NaN;
+      p = a / b;
+      return isFinite(p) ? p : NaN;
     }
     if (op === "^") {
       a = evalAst(node[1], env);
@@ -433,15 +439,24 @@
     }
   }
 
+  function crossesVisibleGap(prev, next, lo, hi) {
+    // True when consecutive samples sit on opposite sides of the visible
+    // range — the usual signature of a vertical/horizontal asymptote bridge.
+    return (prev > hi && next < lo) || (prev < lo && next > hi);
+  }
+
   function drawExplicit() {
     var s = size();
     var sampleAlongX = spec.dependent !== spec.xAxis;
     var n = Math.max(400, sampleAlongX ? s.w * 2 : s.h * 2);
+    var xPad = (view.xmax - view.xmin) * 0.02;
+    var yPad = (view.ymax - view.ymin) * 0.02;
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 2.25;
     ctx.beginPath();
     var started = false;
-    var i, extra, t, fv, xs, ys;
+    var prevDep = null;
+    var i, extra, t, fv, xs, ys, dep;
     for (i = 0; i <= n; i++) {
       extra = {};
       if (sampleAlongX) {
@@ -450,8 +465,10 @@
         fv = evalAst(spec.rhs, envWith(extra));
         if (!isFinite(fv)) {
           started = false;
+          prevDep = null;
           continue;
         }
+        dep = fv;
         xs = sx(t);
         ys = sy(fv);
       } else {
@@ -460,15 +477,28 @@
         fv = evalAst(spec.rhs, envWith(extra));
         if (!isFinite(fv)) {
           started = false;
+          prevDep = null;
           continue;
         }
+        dep = fv;
         xs = sx(fv);
         ys = sy(t);
+      }
+      if (started && prevDep != null) {
+        var gap = sampleAlongX
+          ? crossesVisibleGap(prevDep, dep, view.ymin - yPad, view.ymax + yPad)
+          : crossesVisibleGap(prevDep, dep, view.xmin - xPad, view.xmax + xPad);
+        if (gap) {
+          started = false;
+        }
       }
       if (!started) {
         ctx.moveTo(xs, ys);
         started = true;
-      } else ctx.lineTo(xs, ys);
+      } else {
+        ctx.lineTo(xs, ys);
+      }
+      prevDep = dep;
     }
     ctx.stroke();
   }
