@@ -224,11 +224,13 @@ body.is-dragging-tab .wm-tab {
 }
 
 .wm-tab-close {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
+  margin-right: -2px;
   border: none;
   border-radius: 5px;
   background: transparent;
@@ -237,6 +239,12 @@ body.is-dragging-tab .wm-tab {
   font-size: 14px;
   line-height: 1;
   opacity: 0.7;
+}
+
+.wm-tab-close::before {
+  content: "";
+  position: absolute;
+  inset: -6px -4px;
 }
 
 .wm-tab-close:hover {

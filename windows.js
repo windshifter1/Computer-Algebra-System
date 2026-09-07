@@ -32,11 +32,21 @@
   const groupEls = new Map();
   let dragging = null;
   let ignoreNextClick = false;
+  let ignoreClickTimer = 0;
   let overlayOn = true;
   let snapKind = null;
 
   function tabUid() {
     return "w" + state.nextTab++;
+  }
+
+  function ignoreClicks(ms) {
+    ignoreNextClick = true;
+    if (ignoreClickTimer) window.clearTimeout(ignoreClickTimer);
+    ignoreClickTimer = window.setTimeout(function () {
+      ignoreNextClick = false;
+      ignoreClickTimer = 0;
+    }, ms || 320);
   }
 
   function groupUid() {
@@ -630,18 +640,23 @@
     });
 
     tabs.addEventListener("click", function (e) {
+      const close = e.target.closest(".wm-tab-close");
+      const tabEl = e.target.closest(".wm-tab");
       if (ignoreNextClick) {
         ignoreNextClick = false;
+        if (ignoreClickTimer) {
+          window.clearTimeout(ignoreClickTimer);
+          ignoreClickTimer = 0;
+        }
         e.preventDefault();
         e.stopPropagation();
         return;
       }
-      const close = e.target.closest(".wm-tab-close");
-      const tabEl = e.target.closest(".wm-tab");
       if (!tabEl) return;
       if (close) {
         e.preventDefault();
         e.stopPropagation();
+        ignoreClicks(320);
         closeTab(tabEl.dataset.windowId);
         return;
       }
@@ -650,7 +665,27 @@
 
     tabs.addEventListener("pointerdown", function (e) {
       if (e.button !== 0) return;
-      if (e.target.closest(".wm-tab-close")) return;
+      const close = e.target.closest(".wm-tab-close");
+      if (close) {
+        e.preventDefault();
+        e.stopPropagation();
+        const tabEl = close.closest(".wm-tab");
+        const id = tabEl && tabEl.dataset.windowId;
+        const pointerId = e.pointerId;
+        function onCloseUp(ev) {
+          if (ev.pointerId !== pointerId) return;
+          document.removeEventListener("pointerup", onCloseUp, true);
+          document.removeEventListener("pointercancel", onCloseUp, true);
+          if (ev.type === "pointercancel" || !id) return;
+          const top = document.elementFromPoint(ev.clientX, ev.clientY);
+          if (!top || !close.isConnected || !close.contains(top)) return;
+          ignoreClicks(320);
+          closeTab(id);
+        }
+        document.addEventListener("pointerup", onCloseUp, true);
+        document.addEventListener("pointercancel", onCloseUp, true);
+        return;
+      }
       const tabEl = e.target.closest(".wm-tab");
       if (!tabEl) return;
       const pointerId = e.pointerId;
@@ -1287,7 +1322,7 @@
       d.raf = 0;
     }
     if (d.pendingX != null) updateTabDrag(d.pendingX, d.pendingY);
-    ignoreNextClick = true;
+    ignoreClicks(320);
 
     if (!d.canExtract) {
       bounceTabHome(d.tabEl);
