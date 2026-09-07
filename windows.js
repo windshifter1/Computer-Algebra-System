@@ -357,14 +357,22 @@
       const tabEl = e.target.closest(".wm-tab");
       if (!tabEl) return;
       const pointerId = e.pointerId;
-      const start = { x: e.clientX, y: e.clientY, started: false };
+      const rect = tabEl.getBoundingClientRect();
+      const start = {
+        x: e.clientX,
+        y: e.clientY,
+        started: false,
+        grabX: e.clientX - rect.left,
+        grabY: e.clientY - rect.top,
+        originLeft: rect.left,
+      };
       function onMove(ev) {
         const dx = ev.clientX - start.x;
         const dy = ev.clientY - start.y;
         if (!start.started) {
           if (dx * dx + dy * dy < 36) return;
           start.started = true;
-          beginTabDrag(tabEl, ev.clientX, ev.clientY);
+          beginTabDrag(tabEl, ev.clientX, ev.clientY, start);
         }
         updateTabDrag(ev.clientX, ev.clientY);
       }
@@ -472,6 +480,7 @@
   }
 
   function render() {
+    if (dragging) return;
     const ids = Object.keys(state.groups).sort(function (a, b) {
       const az = state.groups[a].kind === "popup" ? state.groups[a].z : 0;
       const bz = state.groups[b].kind === "popup" ? state.groups[b].z : 0;
@@ -684,125 +693,387 @@
     return "float";
   }
 
-  function groupAtPoint(x, y) {
+  function snapshotGroup(g) {
+    return { x: g.x, y: g.y, w: g.w, h: g.h, kind: g.kind, z: g.z };
+  }
+
+  function restoreGroupRect(g, snap) {
+    g.x = snap.x;
+    g.y = snap.y;
+    g.w = snap.w;
+    g.h = snap.h;
+    g.kind = snap.kind;
+    g.z = snap.z;
+  }
+
+  function makePlaceholder(width) {
+    const ph = document.createElement("div");
+    ph.className = "wm-tab-ph";
+    ph.style.width = width + "px";
+    return ph;
+  }
+
+  function flipChildren(container, mutate) {
+    const nodes = Array.prototype.slice.call(container.children);
+    const first = new Map();
+    nodes.forEach(function (el) {
+      first.set(el, el.getBoundingClientRect());
+    });
+    mutate();
+    nodes.forEach(function (el) {
+      if (!el.isConnected || (dragging && el === dragging.tabEl)) return;
+      const a = first.get(el);
+      if (!a) return;
+      const b = el.getBoundingClientRect();
+      const dx = a.left - b.left;
+      if (Math.abs(dx) < 1) return;
+      el.style.transition = "none";
+      el.style.transform = "translateX(" + dx + "px)";
+      el.getBoundingClientRect();
+      el.style.transition = "transform 160ms ease";
+      el.style.transform = "";
+    });
+  }
+
+  function movePlaceholder(tabsEl, clientX) {
+    const ph = dragging.placeholder;
+    if (!ph || !tabsEl) return;
+    if (ph.parentNode && ph.parentNode !== tabsEl) {
+      const prev = ph.parentNode;
+      flipChildren(prev, function () {
+        ph.remove();
+      });
+    }
+    if (ph.parentNode !== tabsEl) {
+      ph.style.width = dragging.tabWidth + "px";
+      tabsEl.appendChild(ph);
+    } else {
+      ph.style.width = dragging.tabWidth + "px";
+    }
+    const kids = Array.prototype.filter.call(tabsEl.children, function (el) {
+      return el !== ph && el.classList.contains("wm-tab");
+    });
+    let before = null;
+    for (let i = 0; i < kids.length; i++) {
+      const r = kids[i].getBoundingClientRect();
+      if (clientX < r.left + r.width / 2) {
+        before = kids[i];
+        break;
+      }
+    }
+    if (ph.nextSibling === before) return;
+    flipChildren(tabsEl, function () {
+      tabsEl.insertBefore(ph, before);
+    });
+  }
+
+  function stripAtPoint(x, y) {
     const nodes = document.querySelectorAll(".wm-group");
     for (let i = nodes.length - 1; i >= 0; i--) {
-      const rect = nodes[i].getBoundingClientRect();
-      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return nodes[i];
+      const gid = nodes[i].dataset.groupId;
+      if (dragging.liveGid && gid === dragging.liveGid) continue;
+      const strip = nodes[i].querySelector(".wm-tabstrip");
+      const r = strip.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top - 8 && y <= r.bottom + 10) {
+        return { gid: gid, tabsEl: nodes[i].querySelector(".wm-tabs"), stripTop: r.top + 6 };
+      }
     }
     return null;
   }
 
-  function beginTabDrag(tabEl, x, y) {
-    dragging = {
-      id: tabEl.dataset.windowId,
-      groupId: getTab(tabEl.dataset.windowId).groupId,
-      overTabId: null,
-      placeAfter: false,
-      hoverGroupId: null,
-      zone: null,
-      mode: null,
-      pointer: pointerPct(x, y),
-    };
-    tabEl.classList.add("is-dragging");
-    document.body.classList.add("is-dragging-tab");
-    els.ghost.textContent = tabEl.querySelector(".wm-tab-title").textContent;
-    els.ghost.classList.add("is-visible");
-    els.catcher.classList.add("is-visible");
-    els.overlay.classList.add("is-dragging");
-    els.ghost.style.left = x + 14 + "px";
-    els.ghost.style.top = y + 12 + "px";
-    updateTabDrag(x, y);
+  function positionFollowTab(x, y, lockTop) {
+    const tabEl = dragging.tabEl;
+    tabEl.style.left = x - dragging.grabX + "px";
+    tabEl.style.top = (lockTop != null ? lockTop : y - dragging.grabY) + "px";
   }
 
-  function updateTabDrag(x, y) {
-    if (!dragging) return;
-    els.ghost.style.left = x + 14 + "px";
-    els.ghost.style.top = y + 12 + "px";
-    document.querySelectorAll(".wm-tab").forEach(function (t) {
-      t.classList.remove("drop-before", "drop-after");
-    });
-    document.querySelectorAll(".wm-tabstrip").forEach(function (s) {
-      s.classList.remove("drop-into");
-    });
+  function slideSoloTab(x) {
+    const tabEl = dragging.tabEl;
+    const tabsEl = dragging.tabsEl;
+    const parent = tabsEl.getBoundingClientRect();
+    const raw = x - dragging.grabX - dragging.originLeft;
+    const minT = parent.left - dragging.originLeft;
+    const maxT = Math.max(minT, parent.right - dragging.tabWidth - dragging.originLeft);
+    let t = raw;
+    if (t < minT) t = minT + (t - minT) * 0.3;
+    else if (t > maxT) t = maxT + (t - maxT) * 0.3;
+    tabEl.style.transform = "translateX(" + t + "px)";
+  }
 
-    const pct = pointerPct(x, y);
-    dragging.pointer = pct;
-    const groupEl = groupAtPoint(x, y);
-    dragging.hoverGroupId = groupEl ? groupEl.dataset.groupId : null;
-    dragging.overTabId = null;
-    dragging.zone = null;
-    dragging.mode = null;
+  function bounceTabHome(tabEl) {
+    if (!tabEl) return;
+    tabEl.style.transition = "transform 0.18s ease";
+    tabEl.style.transform = "translateX(0)";
+    window.setTimeout(function () {
+      tabEl.style.transition = "";
+      tabEl.style.transform = "";
+    }, 200);
+  }
 
-    if (groupEl) {
-      const strip = groupEl.querySelector(".wm-tabstrip");
-      const stripRect = strip.getBoundingClientRect();
-      if (x >= stripRect.left && x <= stripRect.right && y >= stripRect.top && y <= stripRect.bottom) {
-        const tabs = strip.querySelectorAll(".wm-tab");
-        let hit = null;
-        for (let i = 0; i < tabs.length; i++) {
-          if (tabs[i].dataset.windowId === dragging.id) continue;
-          const r = tabs[i].getBoundingClientRect();
-          if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-            hit = tabs[i];
-            dragging.placeAfter = x > r.left + r.width / 2;
-            break;
-          }
-        }
-        dragging.mode = "strip";
-        dragging.hoverGroupId = groupEl.dataset.groupId;
-        if (hit) {
-          dragging.overTabId = hit.dataset.windowId;
-          hit.classList.add(dragging.placeAfter ? "drop-after" : "drop-before");
-        } else {
-          strip.classList.add("drop-into");
-        }
-        setSnapPreview(null, "Drop on tab strip · " + roundPct(pct.x) + "%, " + roundPct(pct.y) + "%");
-        highlightZone(null);
-        return;
-      }
+  function teardownLive() {
+    if (!dragging || !dragging.liveGid) return;
+    const tab = getTab(dragging.id);
+    const src = dragging.groupId;
+    const liveId = dragging.liveGid;
+    if (tab) tab.groupId = src;
+    if (src && state.groups[src] && dragging.srcOrigin) {
+      restoreGroupRect(state.groups[src], dragging.srcOrigin);
+      styleGroup(src);
+      renderGroupBody(src);
     }
+    removeGroup(liveId);
+    dragging.liveGid = null;
+  }
 
-    dragging.mode = "snap";
-    dragging.zone = zoneFromPct(pct.x, pct.y);
-    const snap = SNAP[dragging.zone];
-    highlightZone(dragging.zone);
-    if (dragging.zone === "float") {
-      const live = normalizeRect({
+  function ensureLiveGroup() {
+    if (dragging.liveGid) return;
+    const tab = getTab(dragging.id);
+    const src = dragging.groupId;
+    const srcG = state.groups[src];
+    if (!tab || !srcG) return;
+    dragging.srcOrigin = snapshotGroup(srcG);
+    const g = createGroup("dock", SNAP.float);
+    tab.groupId = g.id;
+    g.activeId = tab.id;
+    dragging.liveGid = g.id;
+    const remaining = tabsIn(src);
+    if (srcG.activeId === tab.id && remaining.length) srcG.activeId = remaining[0].id;
+    els.windows.appendChild(ensureGroupEl(g.id));
+    styleGroup(g.id);
+    renderGroupBody(g.id);
+    renderGroupBody(src);
+  }
+
+  function applyLiveLayout(zone, pct) {
+    const live = state.groups[dragging.liveGid];
+    const src = state.groups[dragging.groupId];
+    if (!live) return;
+    const liveEl = groupEls.get(dragging.liveGid);
+    if (zone === "float") {
+      const rect = normalizeRect({
         x: pct.x - SNAP.float.w / 2,
         y: pct.y - 8,
         w: SNAP.float.w,
         h: SNAP.float.h,
       });
-      setSnapPreview(live, "Float at " + fmtRect(live));
-    } else {
-      setSnapPreview(snap, snap.label + " · " + fmtRect(snap));
+      Object.assign(live, rect, { kind: "popup" });
+      if (!dragging.floatZ) dragging.floatZ = ++state.zTop;
+      live.z = dragging.floatZ;
+      if (src && dragging.srcOrigin) {
+        restoreGroupRect(src, dragging.srcOrigin);
+        styleGroup(dragging.groupId);
+      }
+      if (liveEl) {
+        liveEl.classList.add("is-live-float");
+        liveEl.classList.add("wm-popup");
+      }
+      styleGroup(dragging.liveGid);
+      setHud("popup  " + fmtRect(live));
+      return;
     }
+    const rect = SNAP[zone];
+    if (!rect) return;
+    Object.assign(live, { x: rect.x, y: rect.y, w: rect.w, h: rect.h, kind: "dock", z: 1 });
+    if (liveEl) {
+      liveEl.classList.remove("is-live-float");
+      liveEl.classList.remove("wm-popup");
+    }
+    if (src && dragging.srcOrigin && dragging.srcOrigin.w === 100 && dragging.srcOrigin.h === 100 && COMPLEMENT[zone]) {
+      Object.assign(src, COMPLEMENT[zone], { kind: "dock" });
+      styleGroup(dragging.groupId);
+    } else if (src && dragging.srcOrigin) {
+      restoreGroupRect(src, dragging.srcOrigin);
+      styleGroup(dragging.groupId);
+    }
+    styleGroup(dragging.liveGid);
+    setHud((SNAP[zone].label || zone) + "  ·  " + fmtRect(live));
+  }
+
+  function orderedIdsFromStrip(tabsEl, dragId) {
+    const ids = [];
+    Array.prototype.forEach.call(tabsEl.children, function (node) {
+      if (node.classList.contains("wm-tab-ph")) ids.push(dragId);
+      else if (node.classList.contains("wm-tab") && node.dataset.windowId !== dragId) {
+        ids.push(node.dataset.windowId);
+      }
+    });
+    if (ids.indexOf(dragId) < 0) ids.push(dragId);
+    return ids;
+  }
+
+  function setGroupTabOrder(gid, orderedIds) {
+    const tab = getTab(dragging.id);
+    const picked = [];
+    orderedIds.forEach(function (id) {
+      const t = getTab(id);
+      if (!t) return;
+      t.groupId = gid;
+      picked.push(t);
+    });
+    const result = [];
+    let inserted = false;
+    state.tabs.forEach(function (t) {
+      if (t.id === dragging.id || t.groupId === gid) {
+        if (!inserted) {
+          picked.forEach(function (p) {
+            result.push(p);
+          });
+          inserted = true;
+        }
+        return;
+      }
+      result.push(t);
+    });
+    if (!inserted) {
+      picked.forEach(function (p) {
+        result.push(p);
+      });
+    }
+    state.tabs = result;
+    if (tab && state.groups[gid]) state.groups[gid].activeId = tab.id;
+    const src = dragging.groupId;
+    if (src && src !== gid && state.groups[src] && !tabsIn(src).length) removeGroup(src);
+  }
+
+  function beginTabDrag(tabEl, x, y, start) {
+    const tab = getTab(tabEl.dataset.windowId);
+    const gid = tab.groupId;
+    const r = tabEl.getBoundingClientRect();
+    const canExtract = tabsIn(gid).length > 1;
+    const ph = makePlaceholder(r.width);
+    const tabsEl = tabEl.parentNode;
+    const next = tabEl.nextSibling;
+    dragging = {
+      id: tab.id,
+      groupId: gid,
+      tabEl: tabEl,
+      tabsEl: tabsEl,
+      placeholder: ph,
+      canExtract: canExtract,
+      grabX: start.grabX,
+      grabY: start.grabY,
+      originLeft: start.originLeft,
+      tabWidth: r.width,
+      hoverGroupId: gid,
+      zone: null,
+      mode: "strip",
+      pointer: pointerPct(x, y),
+      liveGid: null,
+      srcOrigin: null,
+      floatZ: 0,
+      lastZone: null,
+    };
+    document.body.classList.add("is-dragging-tab");
+    if (!canExtract) {
+      tabEl.classList.add("is-sliding");
+      tabsEl.classList.add("is-sliding-tabs");
+      updateTabDrag(x, y);
+      return;
+    }
+    tabEl.classList.add("is-drag-follow");
+    tabEl.style.width = r.width + "px";
+    tabEl.style.left = r.left + "px";
+    tabEl.style.top = r.top + "px";
+    document.body.appendChild(tabEl);
+    if (next) tabsEl.insertBefore(ph, next);
+    else tabsEl.appendChild(ph);
+    els.catcher.classList.add("is-visible");
+    els.overlay.classList.add("is-dragging");
+    updateTabDrag(x, y);
+  }
+
+  function updateTabDrag(x, y) {
+    if (!dragging) return;
+    const pct = pointerPct(x, y);
+    dragging.pointer = pct;
+
+    if (!dragging.canExtract) {
+      slideSoloTab(x);
+      setHud("move tab");
+      return;
+    }
+
+    const strip = stripAtPoint(x, y);
+    if (strip) {
+      dragging.mode = "strip";
+      dragging.hoverGroupId = strip.gid;
+      dragging.zone = null;
+      dragging.lastZone = null;
+      teardownLive();
+      positionFollowTab(x, y, strip.stripTop);
+      movePlaceholder(strip.tabsEl, x);
+      highlightZone(null);
+      setSnapPreview(null);
+      setHud("drop on tab strip");
+      return;
+    }
+
+    dragging.mode = "snap";
+    dragging.hoverGroupId = null;
+    dragging.zone = zoneFromPct(pct.x, pct.y);
+    positionFollowTab(x, y);
+    if (dragging.placeholder) dragging.placeholder.style.width = "0px";
+    highlightZone(dragging.zone);
+
+    if (dragging.zone !== "float") {
+      const existing = groupByRect(SNAP[dragging.zone]);
+      if (existing && existing !== dragging.liveGid && groupEls.get(existing)) {
+        teardownLive();
+        dragging.mode = "strip";
+        dragging.hoverGroupId = existing;
+        dragging.placeholder.style.width = dragging.tabWidth + "px";
+        movePlaceholder(groupEls.get(existing).querySelector(".wm-tabs"), x);
+        highlightZone(null);
+        setHud("drop on tab strip");
+        return;
+      }
+    }
+
+    ensureLiveGroup();
+    applyLiveLayout(dragging.zone, pct);
+    dragging.lastZone = dragging.zone;
   }
 
   function finishDrag() {
     const d = dragging;
-    dragging = null;
+    if (!d) return;
+    ignoreNextClick = true;
+
+    if (!d.canExtract) {
+      bounceTabHome(d.tabEl);
+      d.tabEl.classList.remove("is-sliding");
+      if (d.tabsEl) d.tabsEl.classList.remove("is-sliding-tabs");
+      document.body.classList.remove("is-dragging-tab");
+      dragging = null;
+      return;
+    }
+
+    const stripIds =
+      d.mode === "strip" && d.placeholder && d.placeholder.parentNode
+        ? orderedIdsFromStrip(d.placeholder.parentNode, d.id)
+        : null;
+
+    if (d.mode === "strip" && d.hoverGroupId && state.groups[d.hoverGroupId] && stripIds) {
+      teardownLive();
+      setGroupTabOrder(d.hoverGroupId, stripIds);
+    } else if (d.mode === "snap" && d.zone) {
+      if (!d.liveGid) applySnap(d.id, d.zone, d.pointer);
+    }
+
+    if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
+    d.tabEl.classList.remove("is-drag-follow", "is-sliding", "is-dragging");
+    d.tabEl.style.left = "";
+    d.tabEl.style.top = "";
+    d.tabEl.style.width = "";
+    d.tabEl.style.transform = "";
+    if (d.tabEl.parentNode === document.body) d.tabEl.remove();
     document.body.classList.remove("is-dragging-tab");
-    els.ghost.classList.remove("is-visible");
     els.catcher.classList.remove("is-visible");
     els.overlay.classList.remove("is-dragging");
     setSnapPreview(null);
     highlightZone(null);
-    document.querySelectorAll(".wm-tab").forEach(function (t) {
-      t.classList.remove("is-dragging", "drop-before", "drop-after");
-    });
-    document.querySelectorAll(".wm-tabstrip").forEach(function (s) {
-      s.classList.remove("drop-into");
-    });
-    if (!d) return;
-    ignoreNextClick = true;
-    if (d.mode === "strip" && d.hoverGroupId) {
-      moveTabToGroup(d.id, d.hoverGroupId, d.overTabId, d.placeAfter);
-      return;
-    }
-    if (d.mode === "snap" && d.zone) applySnap(d.id, d.zone, d.pointer);
-    updateHud();
+    dragging = null;
+    render();
   }
 
   function startPopupMove(e, gid) {

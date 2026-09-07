@@ -165,6 +165,39 @@ body {
   opacity: 0.35;
 }
 
+.wm-tab.is-sliding {
+  position: relative;
+  z-index: 4;
+  transition: none;
+}
+
+.wm-tab.is-drag-follow {
+  position: fixed;
+  z-index: 500;
+  margin: 0;
+  opacity: 1;
+  background: var(--wm-surface);
+  border-color: var(--wm-line);
+  box-shadow: var(--wm-shadow);
+  cursor: grabbing;
+  transition: none;
+}
+
+.wm-tab-ph {
+  flex: 0 0 auto;
+  height: var(--wm-tab-h);
+  pointer-events: none;
+  transition: width 160ms ease;
+}
+
+.wm-tabs.is-sliding-tabs {
+  overflow: visible;
+}
+
+body.is-dragging-tab .wm-tab:not(.is-drag-follow):not(.is-sliding) {
+  transition: transform 160ms ease;
+}
+
 .wm-tab.drop-before {
   box-shadow: inset 3px 0 0 var(--wm-accent);
 }
@@ -260,6 +293,10 @@ body.is-dragging-tab .wm-tab {
 .wm-popup.is-top {
   border-color: #9db0e8;
   box-shadow: var(--wm-shadow), 0 0 0 2px var(--wm-accent-soft);
+}
+
+.wm-group.is-live-float {
+  box-shadow: var(--wm-shadow);
 }
 
 .wm-popup .wm-tabstrip {
