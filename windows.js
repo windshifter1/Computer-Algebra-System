@@ -3,15 +3,12 @@
 
   const STORAGE_KEY = "cas-windows-v3";
   const MIN_PCT = { w: 18, h: 20 };
+  const CUT = 25;
   const SNAP = {
     left: { x: 0, y: 0, w: 50, h: 100, label: "Left 50%" },
     right: { x: 50, y: 0, w: 50, h: 100, label: "Right 50%" },
     top: { x: 0, y: 0, w: 100, h: 50, label: "Top 50%" },
     bottom: { x: 0, y: 50, w: 100, h: 50, label: "Bottom 50%" },
-    tl: { x: 0, y: 0, w: 50, h: 50, label: "Top-left 50×50" },
-    tr: { x: 50, y: 0, w: 50, h: 50, label: "Top-right 50×50" },
-    bl: { x: 0, y: 50, w: 50, h: 50, label: "Bottom-left 50×50" },
-    br: { x: 50, y: 50, w: 50, h: 50, label: "Bottom-right 50×50" },
     float: { x: 22, y: 16, w: 42, h: 55, label: "Float" },
   };
   const COMPLEMENT = {
@@ -19,10 +16,6 @@
     right: { x: 0, y: 0, w: 50, h: 100 },
     top: { x: 0, y: 50, w: 100, h: 50 },
     bottom: { x: 0, y: 0, w: 100, h: 50 },
-    tl: { x: 50, y: 0, w: 50, h: 100 },
-    tr: { x: 0, y: 0, w: 50, h: 100 },
-    bl: { x: 50, y: 0, w: 50, h: 100 },
-    br: { x: 0, y: 0, w: 50, h: 100 },
   };
 
   let state = {
@@ -680,10 +673,14 @@
   }
 
   function zoneFromPct(px, py) {
-    if (px < 18) return py < 22 ? "tl" : py > 78 ? "bl" : "left";
-    if (px > 82) return py < 22 ? "tr" : py > 78 ? "br" : "right";
-    if (py < 16) return "top";
-    if (py > 84) return "bottom";
+    const x = clamp(px, 0, 99.999);
+    const y = clamp(py, 0, 99.999);
+    const inner = 100 - CUT;
+    if (x >= CUT && x <= inner && y >= CUT && y <= inner) return "float";
+    if (y <= Math.min(x, 100 - x)) return "top";
+    if (y >= Math.max(x, 100 - x)) return "bottom";
+    if (x <= Math.min(y, 100 - y)) return "left";
+    if (x >= Math.max(y, 100 - y)) return "right";
     return "float";
   }
 
@@ -712,7 +709,7 @@
     els.ghost.textContent = tabEl.querySelector(".wm-tab-title").textContent;
     els.ghost.classList.add("is-visible");
     els.catcher.classList.add("is-visible");
-    els.zones.classList.add("is-visible");
+    els.overlay.classList.add("is-dragging");
     els.ghost.style.left = x + 14 + "px";
     els.ghost.style.top = y + 12 + "px";
     updateTabDrag(x, y);
@@ -789,7 +786,7 @@
     document.body.classList.remove("is-dragging-tab");
     els.ghost.classList.remove("is-visible");
     els.catcher.classList.remove("is-visible");
-    els.zones.classList.remove("is-visible");
+    els.overlay.classList.remove("is-dragging");
     setSnapPreview(null);
     highlightZone(null);
     document.querySelectorAll(".wm-tab").forEach(function (t) {
@@ -886,53 +883,73 @@
     target.addEventListener("pointerup", onUp);
   }
 
-  function buildGrid() {
-    const grid = els.grid;
-    grid.innerHTML = "";
-    for (let i = 1; i < 10; i++) {
-      const v = document.createElement("div");
-      v.className = "wm-pct-line is-v" + (i === 5 ? " is-major" : "");
-      v.style.left = i * 10 + "%";
-      const vl = document.createElement("span");
-      vl.className = "wm-pct-line-label";
-      vl.textContent = i * 10 + "%";
-      v.appendChild(vl);
-      grid.appendChild(v);
-      const h = document.createElement("div");
-      h.className = "wm-pct-line is-h" + (i === 5 ? " is-major" : "");
-      h.style.top = i * 10 + "%";
-      const hl = document.createElement("span");
-      hl.className = "wm-pct-line-label is-h";
-      hl.textContent = i * 10 + "%";
-      h.appendChild(hl);
-      grid.appendChild(h);
-    }
-    Object.keys(SNAP).forEach(function (name) {
-      if (name === "float") return;
-      const r = SNAP[name];
-      const z = document.createElement("div");
-      z.className = "wm-pct-zone";
-      z.dataset.zone = name;
-      z.style.left = r.x + "%";
-      z.style.top = r.y + "%";
-      z.style.width = r.w + "%";
-      z.style.height = r.h + "%";
-      z.innerHTML = "<span>" + r.label + "</span>";
-      els.zones.appendChild(z);
+  function svgEl(name, attrs) {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+    Object.keys(attrs).forEach(function (key) {
+      el.setAttribute(key, attrs[key]);
     });
-    const f = document.createElement("div");
-    f.className = "wm-pct-zone is-float";
-    f.dataset.zone = "float";
-    f.style.left = "18%";
-    f.style.top = "16%";
-    f.style.width = "64%";
-    f.style.height = "68%";
-    f.innerHTML = "<span>Float (center)</span>";
-    els.zones.appendChild(f);
+    return el;
+  }
+
+  function buildOverlay() {
+    const svg = els.split;
+    const labels = els.labels;
+    svg.replaceChildren();
+    labels.replaceChildren();
+    const inner = 100 - CUT;
+    const polys = [
+      { zone: "top", points: "0,0 100,0 " + inner + "," + CUT + " " + CUT + "," + CUT },
+      { zone: "bottom", points: "0,100 100,100 " + inner + "," + inner + " " + CUT + "," + inner },
+      { zone: "left", points: "0,0 0,100 " + CUT + "," + inner + " " + CUT + "," + CUT },
+      { zone: "right", points: "100,0 100,100 " + inner + "," + inner + " " + inner + "," + CUT },
+    ];
+    polys.forEach(function (p) {
+      svg.appendChild(svgEl("polygon", { class: "wm-x-zone", "data-zone": p.zone, points: p.points }));
+    });
+    svg.appendChild(
+      svgEl("rect", {
+        class: "wm-x-zone is-float",
+        "data-zone": "float",
+        x: String(CUT),
+        y: String(CUT),
+        width: String(inner - CUT),
+        height: String(inner - CUT),
+      })
+    );
+    svg.appendChild(svgEl("line", { class: "wm-x-diag", x1: "0", y1: "0", x2: "100", y2: "100" }));
+    svg.appendChild(svgEl("line", { class: "wm-x-diag", x1: "100", y1: "0", x2: "0", y2: "100" }));
+    svg.appendChild(
+      svgEl("rect", {
+        class: "wm-x-inner",
+        x: String(CUT),
+        y: String(CUT),
+        width: String(inner - CUT),
+        height: String(inner - CUT),
+      })
+    );
+
+    [
+      { zone: "top", text: "Top 50%", x: 50, y: CUT / 2 },
+      { zone: "bottom", text: "Bottom 50%", x: 50, y: 100 - CUT / 2 },
+      { zone: "left", text: "Left 50%", x: CUT / 2, y: 50 },
+      { zone: "right", text: "Right 50%", x: 100 - CUT / 2, y: 50 },
+      { zone: "float", text: "Float", x: 50, y: 50 },
+    ].forEach(function (l) {
+      const el = document.createElement("div");
+      el.className = "wm-x-label" + (l.zone === "float" ? " is-float" : "");
+      el.dataset.zone = l.zone;
+      el.textContent = l.text;
+      el.style.left = l.x + "%";
+      el.style.top = l.y + "%";
+      labels.appendChild(el);
+    });
   }
 
   function highlightZone(name) {
-    els.zones.querySelectorAll(".wm-pct-zone").forEach(function (el) {
+    els.split.querySelectorAll(".wm-x-zone").forEach(function (el) {
+      el.classList.toggle("is-active", !!name && el.getAttribute("data-zone") === name);
+    });
+    els.labels.querySelectorAll(".wm-x-label").forEach(function (el) {
       el.classList.toggle("is-active", !!name && el.dataset.zone === name);
     });
   }
@@ -940,11 +957,13 @@
   function setSnapPreview(rect, text) {
     if (!rect) {
       els.snap.hidden = true;
+      els.snap.classList.remove("is-float");
       if (text) setHud(text);
       else updateHud();
       return;
     }
     els.snap.hidden = false;
+    els.snap.classList.toggle("is-float", !!(text && text.indexOf("Float") === 0));
     els.snap.style.left = rect.x + "%";
     els.snap.style.top = rect.y + "%";
     els.snap.style.width = rect.w + "%";
@@ -960,7 +979,7 @@
   function updateHud() {
     const g = state.focusedGroupId && state.groups[state.focusedGroupId];
     if (!g) {
-      setHud("percent layout · drag a tab to snap");
+      setHud("X-split · drag a tab to snap");
       return;
     }
     setHud((g.kind === "popup" ? "popup  " : "tiled  ") + fmtRect(g));
@@ -976,15 +995,15 @@
     els.stage = document.getElementById("wm-stage");
     els.windows = document.getElementById("wm-windows");
     els.overlay = document.getElementById("wm-pct-overlay");
-    els.grid = document.getElementById("wm-pct-grid");
-    els.zones = document.getElementById("wm-pct-zones");
+    els.split = document.getElementById("wm-x-split");
+    els.labels = document.getElementById("wm-x-labels");
     els.snap = document.getElementById("wm-pct-snap");
     els.catcher = document.getElementById("wm-drop-catcher");
     els.ghost = document.getElementById("wm-drag-ghost");
     els.hudText = document.getElementById("wm-pct-hud-text");
     els.toggle = document.getElementById("wm-pct-toggle");
 
-    buildGrid();
+    buildOverlay();
     setOverlay(true);
     els.toggle.addEventListener("click", function () {
       setOverlay(!overlayOn);
