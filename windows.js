@@ -33,6 +33,7 @@
   let dragging = null;
   let ignoreNextClick = false;
   let overlayOn = true;
+  let snapKind = null;
 
   function tabUid() {
     return "w" + state.nextTab++;
@@ -794,18 +795,46 @@
     });
   }
 
+  function stripHit(node, strip) {
+    const r = strip.getBoundingClientRect();
+    return {
+      gid: node.dataset.groupId,
+      tabsEl: node.querySelector(".wm-tabs"),
+      stripEl: strip,
+      stripTop: r.top,
+    };
+  }
+
+  function pointInRect(x, y, r, padX, padY) {
+    return x >= r.left - padX && x <= r.right + padX && y >= r.top - padY && y <= r.bottom + padY;
+  }
+
   function stripAtPoint(x, y) {
-    const slop = dragging.mode === "snap" ? 2 : 16;
-    const nodes = document.querySelectorAll(".wm-group");
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const gid = nodes[i].dataset.groupId;
-      const tabsEl = nodes[i].querySelector(".wm-tabs");
-      const r = tabsEl.getBoundingClientRect();
-      if (x >= r.left - 12 && x <= r.right + 36 && y >= r.top - slop && y <= r.bottom + slop) {
-        return { gid: gid, tabsEl: tabsEl, stripTop: r.top };
-      }
+    const groups = Array.prototype.map.call(document.querySelectorAll(".wm-group"), function (node, order) {
+      return { node: node, order: order, z: parseInt(node.style.zIndex, 10) || 1 };
+    });
+    groups.sort(function (a, b) {
+      if (b.z !== a.z) return b.z - a.z;
+      return b.order - a.order;
+    });
+    const sticky = dragging && dragging.mode === "strip" && dragging.hoverGroupId;
+    const padY = sticky ? 18 : 10;
+    for (let i = 0; i < groups.length; i++) {
+      const node = groups[i].node;
+      const strip = node.querySelector(".wm-tabstrip");
+      if (!strip) continue;
+      const stripBox = strip.getBoundingClientRect();
+      if (pointInRect(x, y, stripBox, 6, padY)) return stripHit(node, strip);
+      if (pointInRect(x, y, node.getBoundingClientRect(), 0, 0)) return null;
     }
     return null;
+  }
+
+  function highlightStrip(gid) {
+    document.querySelectorAll(".wm-tabstrip").forEach(function (el) {
+      const on = !!(gid && el.parentNode && el.parentNode.dataset.groupId === gid);
+      el.classList.toggle("drop-into", on);
+    });
   }
 
   function positionGhost(x, y, lockTop) {
@@ -951,6 +980,7 @@
       positionGhost(x, y, strip.stripTop);
       movePlaceholder(strip.tabsEl, x);
       highlightZone(null);
+      highlightStrip(strip.gid);
       setSnapPreview(null);
       setHud("drop on tab strip");
       return;
@@ -958,6 +988,7 @@
 
     dragging.mode = "snap";
     dragging.hoverGroupId = null;
+    highlightStrip(null);
     dragging.zone = zoneFromPct(pct.x, pct.y);
     positionGhost(x, y);
     if (dragging.placeholder) dragging.placeholder.style.width = "0px";
@@ -1011,6 +1042,7 @@
     els.overlay.classList.remove("is-dragging");
     setSnapPreview(null);
     highlightZone(null);
+    highlightStrip(null);
     dragging = null;
     render();
   }
@@ -1160,20 +1192,26 @@
 
   function setSnapPreview(rect, text) {
     if (!rect) {
-      els.snap.hidden = true;
-      els.snap.classList.remove("is-float");
+      els.snap.classList.remove("is-visible", "is-instant");
+      snapKind = null;
       if (text) setHud(text);
       else updateHud();
       return;
     }
+    const isFloat = !!(text && text.indexOf("Float") === 0);
+    const kind = isFloat ? "float" : text || "dock";
+    const appearing = !els.snap.classList.contains("is-visible");
+    const followFloat = isFloat && snapKind === "float" && !appearing;
+    els.snap.classList.toggle("is-instant", appearing || followFloat);
     const s = stageSize();
-    els.snap.hidden = false;
-    els.snap.classList.toggle("is-float", !!(text && text.indexOf("Float") === 0));
     els.snap.style.left = s.left + (rect.x / 100) * s.w + "px";
     els.snap.style.top = s.top + (rect.y / 100) * s.h + "px";
     els.snap.style.width = (rect.w / 100) * s.w + "px";
     els.snap.style.height = (rect.h / 100) * s.h + "px";
+    els.snap.classList.add("is-visible");
+    els.snap.classList.toggle("is-float", isFloat);
     els.snap.textContent = "";
+    snapKind = kind;
     setHud(text ? text + "  ·  " + fmtRect(rect) : fmtRect(rect));
   }
 
