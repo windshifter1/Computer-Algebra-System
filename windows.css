@@ -496,6 +496,7 @@ body.is-dragging-tab .wm-tab {
   inset: 0;
   z-index: 399;
   display: none;
+  touch-action: none;
 }
 
 #wm-drop-catcher.is-visible {

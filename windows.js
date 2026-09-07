@@ -365,8 +365,14 @@
         grabX: e.clientX - rect.left,
         grabY: e.clientY - rect.top,
         originLeft: rect.left,
+        pointerId: pointerId,
       };
       function onMove(ev) {
+        if (ev.pointerId !== pointerId) return;
+        if (ev.buttons === 0) {
+          onUp(ev);
+          return;
+        }
         const dx = ev.clientX - start.x;
         const dy = ev.clientY - start.y;
         if (!start.started) {
@@ -374,23 +380,30 @@
           start.started = true;
           beginTabDrag(tabEl, ev.clientX, ev.clientY, start);
         }
-        updateTabDrag(ev.clientX, ev.clientY);
+        queueTabDrag(ev.clientX, ev.clientY);
       }
-      function onUp() {
-        tabEl.removeEventListener("pointermove", onMove);
-        tabEl.removeEventListener("pointerup", onUp);
-        tabEl.removeEventListener("pointercancel", onUp);
+      function onUp(ev) {
+        if (ev && ev.pointerId !== pointerId) return;
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", onUp, true);
+        document.removeEventListener("pointercancel", onUp, true);
         try {
           tabEl.releasePointerCapture(pointerId);
         } catch (err) {}
-        if (start.started) finishDrag();
+        try {
+          els.catcher.releasePointerCapture(pointerId);
+        } catch (err) {}
+        if (start.started) {
+          updateTabDrag(ev.clientX, ev.clientY);
+          finishDrag();
+        }
       }
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", onUp, true);
+      document.addEventListener("pointercancel", onUp, true);
       try {
         tabEl.setPointerCapture(pointerId);
       } catch (err) {}
-      tabEl.addEventListener("pointermove", onMove);
-      tabEl.addEventListener("pointerup", onUp);
-      tabEl.addEventListener("pointercancel", onUp);
     });
 
     groupEls.set(gid, group);
@@ -693,6 +706,18 @@
     return "float";
   }
 
+  function queueTabDrag(x, y) {
+    if (!dragging) return;
+    dragging.pendingX = x;
+    dragging.pendingY = y;
+    if (dragging.raf) return;
+    dragging.raf = requestAnimationFrame(function () {
+      dragging.raf = 0;
+      if (!dragging) return;
+      updateTabDrag(dragging.pendingX, dragging.pendingY);
+    });
+  }
+
   function snapshotGroup(g) {
     return { x: g.x, y: g.y, w: g.w, h: g.h, kind: g.kind, z: g.z };
   }
@@ -768,23 +793,23 @@
   }
 
   function stripAtPoint(x, y) {
+    const slop = dragging.mode === "snap" ? 2 : 16;
     const nodes = document.querySelectorAll(".wm-group");
     for (let i = nodes.length - 1; i >= 0; i--) {
       const gid = nodes[i].dataset.groupId;
       if (dragging.liveGid && gid === dragging.liveGid) continue;
-      const strip = nodes[i].querySelector(".wm-tabstrip");
-      const r = strip.getBoundingClientRect();
-      if (x >= r.left && x <= r.right && y >= r.top - 8 && y <= r.bottom + 10) {
-        return { gid: gid, tabsEl: nodes[i].querySelector(".wm-tabs"), stripTop: r.top + 6 };
+      const tabsEl = nodes[i].querySelector(".wm-tabs");
+      const r = tabsEl.getBoundingClientRect();
+      if (x >= r.left - 12 && x <= r.right + 36 && y >= r.top - slop && y <= r.bottom + slop) {
+        return { gid: gid, tabsEl: tabsEl, stripTop: r.top };
       }
     }
     return null;
   }
 
-  function positionFollowTab(x, y, lockTop) {
-    const tabEl = dragging.tabEl;
-    tabEl.style.left = x - dragging.grabX + "px";
-    tabEl.style.top = (lockTop != null ? lockTop : y - dragging.grabY) + "px";
+  function positionGhost(x, y, lockTop) {
+    els.ghost.style.left = x - dragging.grabX + "px";
+    els.ghost.style.top = (lockTop != null ? lockTop : y - dragging.grabY) + "px";
   }
 
   function slideSoloTab(x) {
@@ -810,6 +835,18 @@
     }, 200);
   }
 
+  function hideLivePreview() {
+    if (!dragging || !dragging.liveGid) return;
+    const el = groupEls.get(dragging.liveGid);
+    if (el) el.style.visibility = "hidden";
+    const src = state.groups[dragging.groupId];
+    if (src && dragging.srcOrigin) {
+      restoreGroupRect(src, dragging.srcOrigin);
+      styleGroup(dragging.groupId);
+    }
+    dragging.liveHidden = true;
+  }
+
   function teardownLive() {
     if (!dragging || !dragging.liveGid) return;
     const tab = getTab(dragging.id);
@@ -823,6 +860,7 @@
     }
     removeGroup(liveId);
     dragging.liveGid = null;
+    dragging.liveHidden = false;
   }
 
   function ensureLiveGroup() {
@@ -842,6 +880,7 @@
     styleGroup(g.id);
     renderGroupBody(g.id);
     renderGroupBody(src);
+    dragging.liveHidden = false;
   }
 
   function applyLiveLayout(zone, pct) {
@@ -849,6 +888,9 @@
     const src = state.groups[dragging.groupId];
     if (!live) return;
     const liveEl = groupEls.get(dragging.liveGid);
+    if (zone !== "float" && zone === dragging.lastZone && !dragging.liveHidden) return;
+    if (liveEl) liveEl.style.visibility = "";
+    dragging.liveHidden = false;
     if (zone === "float") {
       const rect = normalizeRect({
         x: pct.x - SNAP.float.w / 2,
@@ -864,20 +906,18 @@
         styleGroup(dragging.groupId);
       }
       if (liveEl) {
-        liveEl.classList.add("is-live-float");
-        liveEl.classList.add("wm-popup");
+        liveEl.classList.add("is-live-float", "wm-popup");
+        applyRect(liveEl, live);
+        const badge = liveEl.querySelector(".wm-pct-badge");
+        if (badge) badge.textContent = fmtRect(live);
       }
-      styleGroup(dragging.liveGid);
       setHud("popup  " + fmtRect(live));
       return;
     }
     const rect = SNAP[zone];
     if (!rect) return;
     Object.assign(live, { x: rect.x, y: rect.y, w: rect.w, h: rect.h, kind: "dock", z: 1 });
-    if (liveEl) {
-      liveEl.classList.remove("is-live-float");
-      liveEl.classList.remove("wm-popup");
-    }
+    if (liveEl) liveEl.classList.remove("is-live-float", "wm-popup");
     if (src && dragging.srcOrigin && dragging.srcOrigin.w === 100 && dragging.srcOrigin.h === 100 && COMPLEMENT[zone]) {
       Object.assign(src, COMPLEMENT[zone], { kind: "dock" });
       styleGroup(dragging.groupId);
@@ -954,14 +994,19 @@
       grabY: start.grabY,
       originLeft: start.originLeft,
       tabWidth: r.width,
+      pointerId: start.pointerId,
       hoverGroupId: gid,
       zone: null,
       mode: "strip",
       pointer: pointerPct(x, y),
       liveGid: null,
+      liveHidden: false,
       srcOrigin: null,
       floatZ: 0,
       lastZone: null,
+      raf: 0,
+      pendingX: x,
+      pendingY: y,
     };
     document.body.classList.add("is-dragging-tab");
     if (!canExtract) {
@@ -970,15 +1015,18 @@
       updateTabDrag(x, y);
       return;
     }
-    tabEl.classList.add("is-drag-follow");
-    tabEl.style.width = r.width + "px";
-    tabEl.style.left = r.left + "px";
-    tabEl.style.top = r.top + "px";
-    document.body.appendChild(tabEl);
+    tabEl.classList.add("is-dragging");
     if (next) tabsEl.insertBefore(ph, next);
     else tabsEl.appendChild(ph);
+    els.ghost.textContent = tabEl.querySelector(".wm-tab-title").textContent;
+    els.ghost.style.width = r.width + "px";
+    els.ghost.classList.add("is-visible");
     els.catcher.classList.add("is-visible");
     els.overlay.classList.add("is-dragging");
+    try {
+      els.catcher.setPointerCapture(start.pointerId);
+    } catch (err) {}
+    positionGhost(x, y, r.top);
     updateTabDrag(x, y);
   }
 
@@ -999,8 +1047,8 @@
       dragging.hoverGroupId = strip.gid;
       dragging.zone = null;
       dragging.lastZone = null;
-      teardownLive();
-      positionFollowTab(x, y, strip.stripTop);
+      hideLivePreview();
+      positionGhost(x, y, strip.stripTop);
       movePlaceholder(strip.tabsEl, x);
       highlightZone(null);
       setSnapPreview(null);
@@ -1011,24 +1059,9 @@
     dragging.mode = "snap";
     dragging.hoverGroupId = null;
     dragging.zone = zoneFromPct(pct.x, pct.y);
-    positionFollowTab(x, y);
+    positionGhost(x, y);
     if (dragging.placeholder) dragging.placeholder.style.width = "0px";
     highlightZone(dragging.zone);
-
-    if (dragging.zone !== "float") {
-      const existing = groupByRect(SNAP[dragging.zone]);
-      if (existing && existing !== dragging.liveGid && groupEls.get(existing)) {
-        teardownLive();
-        dragging.mode = "strip";
-        dragging.hoverGroupId = existing;
-        dragging.placeholder.style.width = dragging.tabWidth + "px";
-        movePlaceholder(groupEls.get(existing).querySelector(".wm-tabs"), x);
-        highlightZone(null);
-        setHud("drop on tab strip");
-        return;
-      }
-    }
-
     ensureLiveGroup();
     applyLiveLayout(dragging.zone, pct);
     dragging.lastZone = dragging.zone;
@@ -1037,6 +1070,11 @@
   function finishDrag() {
     const d = dragging;
     if (!d) return;
+    if (d.raf) {
+      cancelAnimationFrame(d.raf);
+      d.raf = 0;
+    }
+    if (d.pendingX != null) updateTabDrag(d.pendingX, d.pendingY);
     ignoreNextClick = true;
 
     if (!d.canExtract) {
@@ -1058,15 +1096,19 @@
       setGroupTabOrder(d.hoverGroupId, stripIds);
     } else if (d.mode === "snap" && d.zone) {
       if (!d.liveGid) applySnap(d.id, d.zone, d.pointer);
+      else {
+        const liveEl = groupEls.get(d.liveGid);
+        if (liveEl) liveEl.style.visibility = "";
+      }
+    } else if (d.liveGid) {
+      teardownLive();
     }
 
     if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
     d.tabEl.classList.remove("is-drag-follow", "is-sliding", "is-dragging");
-    d.tabEl.style.left = "";
-    d.tabEl.style.top = "";
-    d.tabEl.style.width = "";
     d.tabEl.style.transform = "";
-    if (d.tabEl.parentNode === document.body) d.tabEl.remove();
+    els.ghost.classList.remove("is-visible");
+    els.ghost.style.width = "";
     document.body.classList.remove("is-dragging-tab");
     els.catcher.classList.remove("is-visible");
     els.overlay.classList.remove("is-dragging");
