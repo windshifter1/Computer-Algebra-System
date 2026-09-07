@@ -301,6 +301,7 @@ body.is-dragging-tab .wm-tab {
 }
 
 .wm-resize {
+  display: none;
   position: absolute;
   right: 0;
   bottom: 0;
@@ -312,6 +313,10 @@ body.is-dragging-tab .wm-tab {
   background:
     linear-gradient(135deg, transparent 50%, var(--wm-line) 50%, var(--wm-line) 60%, transparent 60%),
     linear-gradient(135deg, transparent 68%, var(--wm-line) 68%, var(--wm-line) 78%, transparent 78%);
+}
+
+.wm-popup .wm-resize {
+  display: block;
 }
 
 .wm-pct-badge {

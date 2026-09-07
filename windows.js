@@ -112,6 +112,86 @@
     return a && b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
   }
 
+  function isDock(g) {
+    return g && g.kind !== "popup";
+  }
+
+  function rangesOverlap(a0, a1, b0, b1, eps) {
+    return a0 < b1 - eps && a1 > b0 + eps;
+  }
+
+  function growDock(g, others) {
+    const EPS = 0.15;
+    let grew = false;
+    const x1 = g.x + g.w;
+    const y1 = g.y + g.h;
+    let right = 100;
+    let left = 0;
+    let bottom = 100;
+    let top = 0;
+    others.forEach(function (o) {
+      if (rangesOverlap(g.y, y1, o.y, o.y + o.h, EPS)) {
+        if (o.x >= x1 - EPS) right = Math.min(right, o.x);
+        else if (o.x + o.w > x1 + EPS) right = Math.min(right, x1);
+        if (o.x + o.w <= g.x + EPS) left = Math.max(left, o.x + o.w);
+        else if (o.x < g.x - EPS) left = Math.max(left, g.x);
+      }
+      if (rangesOverlap(g.x, x1, o.x, o.x + o.w, EPS)) {
+        if (o.y >= y1 - EPS) bottom = Math.min(bottom, o.y);
+        else if (o.y + o.h > y1 + EPS) bottom = Math.min(bottom, y1);
+        if (o.y + o.h <= g.y + EPS) top = Math.max(top, o.y + o.h);
+        else if (o.y < g.y - EPS) top = Math.max(top, g.y);
+      }
+    });
+    if (right > x1 + EPS) {
+      g.w = roundPct(right - g.x);
+      grew = true;
+    }
+    if (left < g.x - EPS) {
+      g.w = roundPct(x1 - left);
+      g.x = roundPct(left);
+      grew = true;
+    }
+    if (bottom > y1 + EPS) {
+      g.h = roundPct(bottom - g.y);
+      grew = true;
+    }
+    if (top < g.y - EPS) {
+      g.h = roundPct(y1 - top);
+      g.y = roundPct(top);
+      grew = true;
+    }
+    return grew;
+  }
+
+  function fillDockGaps() {
+    const docks = Object.keys(state.groups)
+      .map(function (id) {
+        return state.groups[id];
+      })
+      .filter(isDock);
+    if (!docks.length) return;
+    if (docks.length === 1) {
+      const g = docks[0];
+      g.x = 0;
+      g.y = 0;
+      g.w = 100;
+      g.h = 100;
+      return;
+    }
+    let guard = 0;
+    let changed = true;
+    while (changed && guard++ < 24) {
+      changed = false;
+      docks.forEach(function (g) {
+        const others = docks.filter(function (o) {
+          return o !== g;
+        });
+        if (growDock(g, others)) changed = true;
+      });
+    }
+  }
+
   function groupByRect(rect) {
     return Object.keys(state.groups).find(function (id) {
       return sameRect(state.groups[id], rect);
@@ -348,6 +428,7 @@
     });
 
     resize.addEventListener("pointerdown", function (e) {
+      if (!state.groups[gid] || state.groups[gid].kind !== "popup") return;
       e.preventDefault();
       e.stopPropagation();
       startPopupResize(e, gid);
@@ -515,6 +596,7 @@
 
   function render() {
     if (dragging) return;
+    fillDockGaps();
     const ids = Object.keys(state.groups).sort(function (a, b) {
       const az = state.groups[a].kind === "popup" ? state.groups[a].z : 0;
       const bz = state.groups[b].kind === "popup" ? state.groups[b].z : 0;
@@ -1082,7 +1164,7 @@
 
   function startPopupResize(e, gid) {
     const g = state.groups[gid];
-    if (!g) return;
+    if (!g || g.kind !== "popup") return;
     e.preventDefault();
     focusGroup(gid);
     const start = { x: e.clientX, y: e.clientY };
