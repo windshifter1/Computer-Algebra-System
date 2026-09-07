@@ -116,12 +116,199 @@
     return g && g.kind !== "popup";
   }
 
+  const TILE_EPS = 0.15;
+
+  function dockList() {
+    return Object.keys(state.groups)
+      .map(function (id) {
+        return state.groups[id];
+      })
+      .filter(isDock);
+  }
+
+  function rectArea(r) {
+    return Math.max(0, r.w) * Math.max(0, r.h);
+  }
+
+  function assignRect(g, r) {
+    g.x = roundPct(r.x);
+    g.y = roundPct(r.y);
+    g.w = roundPct(r.w);
+    g.h = roundPct(r.h);
+  }
+
+  function intersection(a, b) {
+    const x = Math.max(a.x, b.x);
+    const y = Math.max(a.y, b.y);
+    const x1 = Math.min(a.x + a.w, b.x + b.w);
+    const y1 = Math.min(a.y + a.h, b.y + b.h);
+    if (x1 - x <= TILE_EPS || y1 - y <= TILE_EPS) return null;
+    return { x: x, y: y, w: x1 - x, h: y1 - y };
+  }
+
+  function containsRect(outer, inner) {
+    return (
+      inner.x >= outer.x - TILE_EPS &&
+      inner.y >= outer.y - TILE_EPS &&
+      inner.x + inner.w <= outer.x + outer.w + TILE_EPS &&
+      inner.y + inner.h <= outer.y + outer.h + TILE_EPS
+    );
+  }
+
+  function subtractRect(a, b) {
+    const hit = intersection(a, b);
+    if (!hit) return [{ x: a.x, y: a.y, w: a.w, h: a.h }];
+    if (containsRect(b, a)) return [];
+    const parts = [];
+    const ax1 = a.x + a.w;
+    const ay1 = a.y + a.h;
+    const ix1 = hit.x + hit.w;
+    const iy1 = hit.y + hit.h;
+    if (hit.x > a.x + TILE_EPS) parts.push({ x: a.x, y: a.y, w: hit.x - a.x, h: a.h });
+    if (ix1 < ax1 - TILE_EPS) parts.push({ x: ix1, y: a.y, w: ax1 - ix1, h: a.h });
+    if (hit.y > a.y + TILE_EPS) parts.push({ x: hit.x, y: a.y, w: hit.w, h: hit.y - a.y });
+    if (iy1 < ay1 - TILE_EPS) parts.push({ x: hit.x, y: iy1, w: hit.w, h: ay1 - iy1 });
+    return parts.filter(function (p) {
+      return p.w > TILE_EPS && p.h > TILE_EPS;
+    });
+  }
+
+  function mergeDockInto(fromId, intoId) {
+    if (!fromId || !intoId || fromId === intoId) return;
+    if (!state.groups[fromId] || !state.groups[intoId]) return;
+    tabsIn(fromId).forEach(function (t) {
+      t.groupId = intoId;
+    });
+    const tabs = tabsIn(intoId);
+    if (tabs.length && !tabs.some(function (t) {
+      return t.id === state.groups[intoId].activeId;
+    })) {
+      state.groups[intoId].activeId = tabs[0].id;
+    }
+    if (state.focusedGroupId === fromId) state.focusedGroupId = intoId;
+    removeGroup(fromId);
+  }
+
+  function tessellateDocks(docks) {
+    const ordered = docks.slice().sort(function (a, b) {
+      return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+    });
+    for (let i = ordered.length - 1; i >= 0; i--) {
+      const cut = ordered[i];
+      if (!state.groups[cut.id]) continue;
+      for (let j = 0; j < i; j++) {
+        const g = ordered[j];
+        if (!state.groups[g.id]) continue;
+        const parts = subtractRect(g, cut);
+        if (!parts.length) {
+          mergeDockInto(g.id, cut.id);
+          continue;
+        }
+        parts.sort(function (a, b) {
+          return rectArea(b) - rectArea(a);
+        });
+        assignRect(g, parts[0]);
+      }
+    }
+  }
+
+  function emptyRects(docks) {
+    let empty = [{ x: 0, y: 0, w: 100, h: 100 }];
+    docks.forEach(function (d) {
+      const next = [];
+      empty.forEach(function (hole) {
+        subtractRect(hole, d).forEach(function (p) {
+          if (p.w > 0.5 && p.h > 0.5) next.push(p);
+        });
+      });
+      empty = next;
+    });
+    return empty;
+  }
+
+  function growInto(g, hole) {
+    const gx1 = g.x + g.w;
+    const gy1 = g.y + g.h;
+    const hx1 = hole.x + hole.w;
+    const hy1 = hole.y + hole.h;
+    if (Math.abs(hx1 - g.x) <= TILE_EPS && hole.y <= g.y + TILE_EPS && hy1 >= gy1 - TILE_EPS && hole.x < g.x - TILE_EPS) {
+      return "left";
+    }
+    if (Math.abs(hole.x - gx1) <= TILE_EPS && hole.y <= g.y + TILE_EPS && hy1 >= gy1 - TILE_EPS && hx1 > gx1 + TILE_EPS) {
+      return "right";
+    }
+    if (Math.abs(hy1 - g.y) <= TILE_EPS && hole.x <= g.x + TILE_EPS && hx1 >= gx1 - TILE_EPS && hole.y < g.y - TILE_EPS) {
+      return "up";
+    }
+    if (Math.abs(hole.y - gy1) <= TILE_EPS && hole.x <= g.x + TILE_EPS && hx1 >= gx1 - TILE_EPS && hy1 > gy1 + TILE_EPS) {
+      return "down";
+    }
+    return null;
+  }
+
+  function applyGrow(g, hole, dir) {
+    if (dir === "left") {
+      g.w = roundPct(g.x + g.w - hole.x);
+      g.x = roundPct(hole.x);
+    } else if (dir === "right") {
+      g.w = roundPct(hole.x + hole.w - g.x);
+    } else if (dir === "up") {
+      g.h = roundPct(g.y + g.h - hole.y);
+      g.y = roundPct(hole.y);
+    } else if (dir === "down") {
+      g.h = roundPct(hole.y + hole.h - g.y);
+    }
+  }
+
+  function absorbHole(hole, docks) {
+    const growers = [];
+    docks.forEach(function (g) {
+      const dir = growInto(g, hole);
+      if (dir) growers.push({ g: g, dir: dir });
+    });
+    if (!growers.length) return false;
+    const byDir = { left: [], right: [], up: [], down: [] };
+    growers.forEach(function (it) {
+      byDir[it.dir].push(it.g);
+    });
+    const axisH = byDir.left.length + byDir.right.length;
+    const axisV = byDir.up.length + byDir.down.length;
+    if (byDir.left.length && byDir.right.length && !axisV) {
+      const mid = roundPct(hole.x + hole.w / 2);
+      const leftSlice = { x: hole.x, y: hole.y, w: mid - hole.x, h: hole.h };
+      const rightSlice = { x: mid, y: hole.y, w: hole.x + hole.w - mid, h: hole.h };
+      byDir.right.forEach(function (g) {
+        applyGrow(g, leftSlice, "right");
+      });
+      byDir.left.forEach(function (g) {
+        applyGrow(g, rightSlice, "left");
+      });
+      return true;
+    }
+    if (byDir.up.length && byDir.down.length && !axisH) {
+      const mid = roundPct(hole.y + hole.h / 2);
+      const topSlice = { x: hole.x, y: hole.y, w: hole.w, h: mid - hole.y };
+      const bottomSlice = { x: hole.x, y: mid, w: hole.w, h: hole.y + hole.h - mid };
+      byDir.down.forEach(function (g) {
+        applyGrow(g, topSlice, "down");
+      });
+      byDir.up.forEach(function (g) {
+        applyGrow(g, bottomSlice, "up");
+      });
+      return true;
+    }
+    growers.forEach(function (it) {
+      applyGrow(it.g, hole, it.dir);
+    });
+    return true;
+  }
+
   function rangesOverlap(a0, a1, b0, b1, eps) {
     return a0 < b1 - eps && a1 > b0 + eps;
   }
 
   function growDock(g, others) {
-    const EPS = 0.15;
+    const EPS = TILE_EPS;
     let grew = false;
     const x1 = g.x + g.w;
     const y1 = g.y + g.h;
@@ -165,30 +352,38 @@
   }
 
   function fillDockGaps() {
-    const docks = Object.keys(state.groups)
-      .map(function (id) {
-        return state.groups[id];
-      })
-      .filter(isDock);
+    let docks = dockList();
     if (!docks.length) return;
     if (docks.length === 1) {
-      const g = docks[0];
-      g.x = 0;
-      g.y = 0;
-      g.w = 100;
-      g.h = 100;
+      assignRect(docks[0], { x: 0, y: 0, w: 100, h: 100 });
+      return;
+    }
+    tessellateDocks(docks);
+    docks = dockList();
+    if (docks.length === 1) {
+      assignRect(docks[0], { x: 0, y: 0, w: 100, h: 100 });
       return;
     }
     let guard = 0;
-    let changed = true;
-    while (changed && guard++ < 24) {
-      changed = false;
+    while (guard++ < 24) {
+      const holes = emptyRects(docks);
+      if (!holes.length) return;
+      let absorbed = false;
+      for (let i = 0; i < holes.length; i++) {
+        if (absorbHole(holes[i], docks)) {
+          absorbed = true;
+          break;
+        }
+      }
+      if (absorbed) continue;
+      let grew = false;
       docks.forEach(function (g) {
         const others = docks.filter(function (o) {
           return o !== g;
         });
-        if (growDock(g, others)) changed = true;
+        if (growDock(g, others)) grew = true;
       });
+      if (!grew) return;
     }
   }
 
