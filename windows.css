@@ -430,7 +430,7 @@ body.is-dragging-tab .wm-tab {
 #wm-pct-snap {
   position: fixed;
   box-sizing: border-box;
-  z-index: 360;
+  z-index: 410;
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.22);

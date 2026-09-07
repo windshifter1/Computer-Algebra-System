@@ -886,7 +886,7 @@
     const tab = getTab(tabEl.dataset.windowId);
     const gid = tab.groupId;
     const r = tabEl.getBoundingClientRect();
-    const canExtract = tabsIn(gid).length > 1;
+    const canExtract = state.tabs.length > 1;
     const ph = makePlaceholder(r.width);
     const tabsEl = tabEl.parentNode;
     const next = tabEl.nextSibling;
