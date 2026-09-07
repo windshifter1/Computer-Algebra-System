@@ -70,9 +70,27 @@
   function pointerPct(clientX, clientY) {
     const s = stageSize();
     return {
-      x: clamp(((clientX - s.left) / s.w) * 100, 0, 100),
-      y: clamp(((clientY - s.top) / s.h) * 100, 0, 100),
+      x: ((clientX - s.left) / s.w) * 100,
+      y: ((clientY - s.top) / s.h) * 100,
     };
+  }
+
+  function sizeRect(r) {
+    return {
+      x: roundPct(r.x),
+      y: roundPct(r.y),
+      w: roundPct(clamp(r.w, MIN_PCT.w, 100)),
+      h: roundPct(clamp(r.h, MIN_PCT.h, 100)),
+    };
+  }
+
+  function floatRectAt(px, py) {
+    return sizeRect({
+      x: px - SNAP.float.w / 2,
+      y: py - 8,
+      w: SNAP.float.w,
+      h: SNAP.float.h,
+    });
   }
 
   function normalizeRect(r) {
@@ -129,7 +147,7 @@
         const src = parsed.groups[id];
         const g = { id: id, kind: src.kind || "dock", activeId: src.activeId, z: src.z || 1 };
         if (src.kind === "popup") {
-          const rect = normalizeRect({
+          const rect = sizeRect({
             x: ((src.x || 0) / stage.w) * 100,
             y: ((src.y || 0) / stage.h) * 100,
             w: ((src.width || 560) / stage.w) * 100,
@@ -166,7 +184,8 @@
       if (!state.zTop) state.zTop = 20;
       Object.keys(state.groups).forEach(function (id) {
         const g = state.groups[id];
-        const rect = normalizeRect({
+        const fit = g.kind === "popup" ? sizeRect : normalizeRect;
+        const rect = fit({
           x: g.x == null ? 0 : g.x,
           y: g.y == null ? 0 : g.y,
           w: g.w == null ? 100 : g.w,
@@ -221,7 +240,8 @@
 
   function createGroup(kind, rect) {
     const g = { id: groupUid(), kind: kind || "dock", activeId: null, z: 1 };
-    const next = normalizeRect(rect || (kind === "popup" ? SNAP.float : { x: 0, y: 0, w: 100, h: 100 }));
+    const fallback = kind === "popup" ? SNAP.float : { x: 0, y: 0, w: 100, h: 100 };
+    const next = (kind === "popup" ? sizeRect : normalizeRect)(rect || fallback);
     g.x = next.x;
     g.y = next.y;
     g.w = next.w;
@@ -644,12 +664,7 @@
     const src = tab.groupId;
     if (zoneName === "float") {
       const p = pointer || { x: 50, y: 40 };
-      const rect = normalizeRect({
-        x: p.x - SNAP.float.w / 2,
-        y: p.y - 8,
-        w: SNAP.float.w,
-        h: SNAP.float.h,
-      });
+      const rect = floatRectAt(p.x, p.y);
       if (state.groups[src] && tabsIn(src).length === 1) {
         Object.assign(state.groups[src], rect, { kind: "popup", z: ++state.zTop });
         state.focusedGroupId = src;
@@ -718,19 +733,6 @@
     });
   }
 
-  function snapshotGroup(g) {
-    return { x: g.x, y: g.y, w: g.w, h: g.h, kind: g.kind, z: g.z };
-  }
-
-  function restoreGroupRect(g, snap) {
-    g.x = snap.x;
-    g.y = snap.y;
-    g.w = snap.w;
-    g.h = snap.h;
-    g.kind = snap.kind;
-    g.z = snap.z;
-  }
-
   function makePlaceholder(width) {
     const ph = document.createElement("div");
     ph.className = "wm-tab-ph";
@@ -797,7 +799,6 @@
     const nodes = document.querySelectorAll(".wm-group");
     for (let i = nodes.length - 1; i >= 0; i--) {
       const gid = nodes[i].dataset.groupId;
-      if (dragging.liveGid && gid === dragging.liveGid) continue;
       const tabsEl = nodes[i].querySelector(".wm-tabs");
       const r = tabsEl.getBoundingClientRect();
       if (x >= r.left - 12 && x <= r.right + 36 && y >= r.top - slop && y <= r.bottom + slop) {
@@ -833,100 +834,6 @@
       tabEl.style.transition = "";
       tabEl.style.transform = "";
     }, 200);
-  }
-
-  function hideLivePreview() {
-    if (!dragging || !dragging.liveGid) return;
-    const el = groupEls.get(dragging.liveGid);
-    if (el) el.style.visibility = "hidden";
-    const src = state.groups[dragging.groupId];
-    if (src && dragging.srcOrigin) {
-      restoreGroupRect(src, dragging.srcOrigin);
-      styleGroup(dragging.groupId);
-    }
-    dragging.liveHidden = true;
-  }
-
-  function teardownLive() {
-    if (!dragging || !dragging.liveGid) return;
-    const tab = getTab(dragging.id);
-    const src = dragging.groupId;
-    const liveId = dragging.liveGid;
-    if (tab) tab.groupId = src;
-    if (src && state.groups[src] && dragging.srcOrigin) {
-      restoreGroupRect(state.groups[src], dragging.srcOrigin);
-      styleGroup(src);
-      renderGroupBody(src);
-    }
-    removeGroup(liveId);
-    dragging.liveGid = null;
-    dragging.liveHidden = false;
-  }
-
-  function ensureLiveGroup() {
-    if (dragging.liveGid) return;
-    const tab = getTab(dragging.id);
-    const src = dragging.groupId;
-    const srcG = state.groups[src];
-    if (!tab || !srcG) return;
-    dragging.srcOrigin = snapshotGroup(srcG);
-    const g = createGroup("dock", SNAP.float);
-    tab.groupId = g.id;
-    g.activeId = tab.id;
-    dragging.liveGid = g.id;
-    const remaining = tabsIn(src);
-    if (srcG.activeId === tab.id && remaining.length) srcG.activeId = remaining[0].id;
-    els.windows.appendChild(ensureGroupEl(g.id));
-    styleGroup(g.id);
-    renderGroupBody(g.id);
-    renderGroupBody(src);
-    dragging.liveHidden = false;
-  }
-
-  function applyLiveLayout(zone, pct) {
-    const live = state.groups[dragging.liveGid];
-    const src = state.groups[dragging.groupId];
-    if (!live) return;
-    const liveEl = groupEls.get(dragging.liveGid);
-    if (zone !== "float" && zone === dragging.lastZone && !dragging.liveHidden) return;
-    if (liveEl) liveEl.style.visibility = "";
-    dragging.liveHidden = false;
-    if (zone === "float") {
-      const rect = normalizeRect({
-        x: pct.x - SNAP.float.w / 2,
-        y: pct.y - 8,
-        w: SNAP.float.w,
-        h: SNAP.float.h,
-      });
-      Object.assign(live, rect, { kind: "popup" });
-      if (!dragging.floatZ) dragging.floatZ = ++state.zTop;
-      live.z = dragging.floatZ;
-      if (src && dragging.srcOrigin) {
-        restoreGroupRect(src, dragging.srcOrigin);
-        styleGroup(dragging.groupId);
-      }
-      if (liveEl) {
-        liveEl.classList.add("is-live-float", "wm-popup");
-        applyRect(liveEl, live);
-        const badge = liveEl.querySelector(".wm-pct-badge");
-        if (badge) badge.textContent = fmtRect(live);
-      }
-      setHud("popup  " + fmtRect(live));
-      return;
-    }
-    const rect = SNAP[zone];
-    if (!rect) return;
-    Object.assign(live, { x: rect.x, y: rect.y, w: rect.w, h: rect.h, kind: "dock", z: 1 });
-    if (liveEl) liveEl.classList.remove("is-live-float", "wm-popup");
-    if (src && dragging.srcOrigin && dragging.srcOrigin.w === 100 && dragging.srcOrigin.h === 100 && COMPLEMENT[zone]) {
-      Object.assign(src, COMPLEMENT[zone], { kind: "dock" });
-      styleGroup(dragging.groupId);
-    } else if (src && dragging.srcOrigin) {
-      restoreGroupRect(src, dragging.srcOrigin);
-      styleGroup(dragging.groupId);
-    }
-    styleGroup(dragging.liveGid);
-    setHud((SNAP[zone].label || zone) + "  ·  " + fmtRect(live));
   }
 
   function orderedIdsFromStrip(tabsEl, dragId) {
@@ -999,11 +906,6 @@
       zone: null,
       mode: "strip",
       pointer: pointerPct(x, y),
-      liveGid: null,
-      liveHidden: false,
-      srcOrigin: null,
-      floatZ: 0,
-      lastZone: null,
       raf: 0,
       pendingX: x,
       pendingY: y,
@@ -1046,8 +948,6 @@
       dragging.mode = "strip";
       dragging.hoverGroupId = strip.gid;
       dragging.zone = null;
-      dragging.lastZone = null;
-      hideLivePreview();
       positionGhost(x, y, strip.stripTop);
       movePlaceholder(strip.tabsEl, x);
       highlightZone(null);
@@ -1062,9 +962,13 @@
     positionGhost(x, y);
     if (dragging.placeholder) dragging.placeholder.style.width = "0px";
     highlightZone(dragging.zone);
-    ensureLiveGroup();
-    applyLiveLayout(dragging.zone, pct);
-    dragging.lastZone = dragging.zone;
+    if (dragging.zone === "float") {
+      const live = floatRectAt(pct.x, pct.y);
+      setSnapPreview(live, "Float");
+    } else {
+      const snap = SNAP[dragging.zone];
+      setSnapPreview(snap, snap.label);
+    }
   }
 
   function finishDrag() {
@@ -1092,16 +996,9 @@
         : null;
 
     if (d.mode === "strip" && d.hoverGroupId && state.groups[d.hoverGroupId] && stripIds) {
-      teardownLive();
       setGroupTabOrder(d.hoverGroupId, stripIds);
     } else if (d.mode === "snap" && d.zone) {
-      if (!d.liveGid) applySnap(d.id, d.zone, d.pointer);
-      else {
-        const liveEl = groupEls.get(d.liveGid);
-        if (liveEl) liveEl.style.visibility = "";
-      }
-    } else if (d.liveGid) {
-      teardownLive();
+      applySnap(d.id, d.zone, d.pointer);
     }
 
     if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
@@ -1123,19 +1020,13 @@
     if (!g || g.kind !== "popup") return;
     e.preventDefault();
     focusGroup(gid);
-    const start = pointerPct(e.clientX, e.clientY);
+    const start = { x: e.clientX, y: e.clientY };
     const origin = { x: g.x, y: g.y };
+    const stage = stageSize();
     const target = e.currentTarget;
     function onMove(ev) {
-      const now = pointerPct(ev.clientX, ev.clientY);
-      const next = normalizeRect({
-        x: origin.x + (now.x - start.x),
-        y: origin.y + (now.y - start.y),
-        w: g.w,
-        h: g.h,
-      });
-      g.x = next.x;
-      g.y = next.y;
+      g.x = roundPct(origin.x + ((ev.clientX - start.x) / stage.w) * 100);
+      g.y = roundPct(origin.y + ((ev.clientY - start.y) / stage.h) * 100);
       const el = groupEls.get(gid);
       if (el) {
         applyRect(el, g);
@@ -1162,16 +1053,16 @@
     if (!g) return;
     e.preventDefault();
     focusGroup(gid);
-    const start = pointerPct(e.clientX, e.clientY);
+    const start = { x: e.clientX, y: e.clientY };
     const origin = { w: g.w, h: g.h };
+    const stage = stageSize();
     const target = e.currentTarget;
     function onMove(ev) {
-      const now = pointerPct(ev.clientX, ev.clientY);
-      const next = normalizeRect({
+      const next = sizeRect({
         x: g.x,
         y: g.y,
-        w: origin.w + (now.x - start.x),
-        h: origin.h + (now.y - start.y),
+        w: origin.w + ((ev.clientX - start.x) / stage.w) * 100,
+        h: origin.h + ((ev.clientY - start.y) / stage.h) * 100,
       });
       g.w = next.w;
       g.h = next.h;
@@ -1275,14 +1166,15 @@
       else updateHud();
       return;
     }
+    const s = stageSize();
     els.snap.hidden = false;
     els.snap.classList.toggle("is-float", !!(text && text.indexOf("Float") === 0));
-    els.snap.style.left = rect.x + "%";
-    els.snap.style.top = rect.y + "%";
-    els.snap.style.width = rect.w + "%";
-    els.snap.style.height = rect.h + "%";
-    els.snap.textContent = text || fmtRect(rect);
-    setHud(text || fmtRect(rect));
+    els.snap.style.left = s.left + (rect.x / 100) * s.w + "px";
+    els.snap.style.top = s.top + (rect.y / 100) * s.h + "px";
+    els.snap.style.width = (rect.w / 100) * s.w + "px";
+    els.snap.style.height = (rect.h / 100) * s.h + "px";
+    els.snap.textContent = "";
+    setHud(text ? text + "  ·  " + fmtRect(rect) : fmtRect(rect));
   }
 
   function setHud(text) {

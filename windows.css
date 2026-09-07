@@ -40,7 +40,7 @@ body {
 #wm-stage {
   position: relative;
   height: 100%;
-  overflow: hidden;
+  overflow: visible;
   background:
     radial-gradient(900px 420px at 10% 0%, #ffffff 0%, transparent 55%),
     var(--wm-bg);
@@ -50,6 +50,7 @@ body {
   position: absolute;
   inset: 8px;
   z-index: 1;
+  overflow: visible;
 }
 
 .wm-empty {
@@ -295,10 +296,6 @@ body.is-dragging-tab .wm-tab {
   box-shadow: var(--wm-shadow), 0 0 0 2px var(--wm-accent-soft);
 }
 
-.wm-group.is-live-float {
-  box-shadow: var(--wm-shadow);
-}
-
 .wm-popup .wm-tabstrip {
   cursor: move;
 }
@@ -338,6 +335,7 @@ body.is-dragging-tab .wm-tab {
   z-index: 350;
   pointer-events: none;
   opacity: 0;
+  overflow: visible;
   transition: opacity 0.15s ease;
 }
 
@@ -430,20 +428,19 @@ body.is-dragging-tab .wm-tab {
 }
 
 #wm-pct-snap {
-  position: absolute;
+  position: fixed;
   box-sizing: border-box;
-  z-index: 2;
-  border: 2px solid var(--wm-accent);
-  border-radius: 12px;
-  background: rgba(30, 79, 215, 0.14);
-  color: #10215d;
-  font-size: 12px;
-  font-weight: 750;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 8px;
+  z-index: 360;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 12px 40px rgba(16, 24, 40, 0.16);
+  color: transparent;
+  font-size: 0;
+  display: block;
+  padding: 0;
 }
 
 #wm-pct-snap[hidden] {
@@ -451,9 +448,8 @@ body.is-dragging-tab .wm-tab {
 }
 
 #wm-pct-snap.is-float {
-  border-color: #c27803;
-  background: rgba(194, 120, 3, 0.18);
-  color: #7c4a03;
+  border-color: rgba(194, 120, 3, 0.45);
+  background: rgba(255, 247, 237, 0.28);
 }
 
 #wm-pct-hud {
