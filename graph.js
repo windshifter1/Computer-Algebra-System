@@ -2,15 +2,33 @@
   "use strict";
 
   var CONSTS = { "π": Math.PI, pi: Math.PI, e: Math.E };
+
+  function safeTan(x) {
+    if (!isFinite(x)) return NaN;
+    // Math.tan(π/2) is a huge finite number, not NaN/Infinity.
+    var halfTurns = x / Math.PI - 0.5;
+    if (Math.abs(halfTurns - Math.round(halfTurns)) < 1e-10) return NaN;
+    var t = Math.tan(x);
+    return isFinite(t) ? t : NaN;
+  }
+
+  function safeLog(fn) {
+    return function (x) {
+      if (!(x > 0) || !isFinite(x)) return NaN;
+      var v = fn(x);
+      return isFinite(v) ? v : NaN;
+    };
+  }
+
   var FUNCS = {
     sin: Math.sin,
     cos: Math.cos,
-    tan: Math.tan,
+    tan: safeTan,
     arcsin: Math.asin,
     arccos: Math.acos,
     arctan: Math.atan,
-    ln: Math.log,
-    log: Math.log10,
+    ln: safeLog(Math.log),
+    log: safeLog(Math.log10),
     abs: Math.abs,
     sqrt: Math.sqrt,
     exp: Math.exp,
@@ -19,6 +37,86 @@
     round: Math.round,
     sign: Math.sign,
   };
+
+  var LATEX_FUNCS = {
+    sin: "\\sin",
+    cos: "\\cos",
+    tan: "\\tan",
+    arcsin: "\\arcsin",
+    arccos: "\\arccos",
+    arctan: "\\arctan",
+    ln: "\\ln",
+    log: "\\log_{10}",
+    sqrt: "\\sqrt",
+    exp: "\\exp",
+  };
+
+  function latexAtom(n) {
+    if (n === "π" || n === "pi") return "\\pi";
+    if (n === "e") return "e";
+    if (typeof n === "string") {
+      var u = n.indexOf("_");
+      if (u > 0) return n.substring(0, u + 1) + "{" + n.substring(u + 1) + "}";
+    }
+    return String(n);
+  }
+
+  function astToLatex(node) {
+    if (node === undefined || node === null || node === "") return "";
+    if (!Array.isArray(node)) return latexAtom(node);
+    var op = node[0];
+    var i, s, a;
+    if (op === "+") {
+      s = "";
+      for (i = 1; i < node.length; i++) {
+        s += astToLatex(node[i]);
+        if (i < node.length - 1) s += "+";
+      }
+      return s.replace(/\+-/g, "-");
+    }
+    if (op === "-") {
+      a = astToLatex(node[1]);
+      if (Array.isArray(node[1]) && node[1][0] === "+") return "-\\left(" + a + "\\right)";
+      return "-" + a;
+    }
+    if (op === "*") {
+      s = "";
+      for (i = 1; i < node.length; i++) {
+        a = astToLatex(node[i]);
+        if (
+          Array.isArray(node[i]) &&
+          (node[i][0] === "+" || (node[i][0] === "-" && Array.isArray(node[i][1]) && node[i][1][0] === "-"))
+        ) {
+          a = "\\left(" + a + "\\right)";
+        }
+        s += a;
+        if (i < node.length - 1 && !Array.isArray(node[i]) && !isNaN(node[i]) && !Array.isArray(node[i + 1]) && !isNaN(node[i + 1])) {
+          s += "\\times ";
+        }
+      }
+      return s;
+    }
+    if (op === "/") return "\\frac{" + astToLatex(node[1]) + "}{" + astToLatex(node[2]) + "}";
+    if (op === "^") {
+      a = astToLatex(node[1]);
+      if (Array.isArray(node[1]) && node[1][0] !== "abs" && !LATEX_FUNCS[node[1][0]]) {
+        a = "\\left(" + a + "\\right)";
+      }
+      return "{" + a + "}^{" + astToLatex(node[2]) + "}";
+    }
+    if (op === "=") {
+      s = "";
+      for (i = 1; i < node.length; i++) {
+        s += astToLatex(node[i]);
+        if (i < node.length - 1) s += "=";
+      }
+      return s;
+    }
+    if (op === "abs") return "\\left|" + astToLatex(node[1]) + "\\right|";
+    if (op === "sqrt") return "\\sqrt{" + astToLatex(node[1]) + "}";
+    if (LATEX_FUNCS[op]) return LATEX_FUNCS[op] + "\\left(" + astToLatex(node[1]) + "\\right)";
+    return "";
+  }
 
   function collectVars(node, out) {
     if (node === undefined || node === null || node === "") return;
@@ -64,8 +162,11 @@
     if (op === "^") {
       a = evalAst(node[1], env);
       b = evalAst(node[2], env);
+      if (!isFinite(a) || !isFinite(b)) return NaN;
       if (a < 0 && Math.abs(b - Math.round(b)) > 1e-10) return NaN;
-      return Math.pow(a, b);
+      if (b < 0 && Math.abs(a) < 1e-12) return NaN;
+      p = Math.pow(a, b);
+      return isFinite(p) ? p : NaN;
     }
     if (op === "-") return -evalAst(node[1], env);
     if (op === "=") return evalAst(node[1], env) - evalAst(node[2], env);
@@ -445,60 +546,163 @@
     return (prev > hi && next < lo) || (prev < lo && next > hi);
   }
 
+  function jumpsAcrossView(prev, next, lo, hi) {
+    if (!isFinite(prev) || !isFinite(next)) return true;
+    return Math.abs(next - prev) > (hi - lo) * 0.75;
+  }
+
+  function straddlesZero(a, b) {
+    if (!isFinite(a) || !isFinite(b)) return true;
+    if (a === 0 || b === 0) return true;
+    return a > 0 !== b > 0;
+  }
+
+  function crossesTanPole(a, b) {
+    if (!isFinite(a) || !isFinite(b)) return true;
+    var n1 = a / Math.PI - 0.5;
+    var n2 = b / Math.PI - 0.5;
+    if (Math.abs(n1 - Math.round(n1)) < 1e-12) return true;
+    if (Math.abs(n2 - Math.round(n2)) < 1e-12) return true;
+    return Math.floor(n1) !== Math.floor(n2);
+  }
+
+  function nodeHasSingularity(node, env1, env2) {
+    if (!Array.isArray(node)) return false;
+    var i;
+    for (i = 1; i < node.length; i++) {
+      if (nodeHasSingularity(node[i], env1, env2)) return true;
+    }
+    var op = node[0];
+    if (op === "/") return straddlesZero(evalAst(node[2], env1), evalAst(node[2], env2));
+    if (op === "^") {
+      var e1 = evalAst(node[2], env1);
+      var e2 = evalAst(node[2], env2);
+      var negative = e1 < 0 || e2 < 0;
+      var nonInt =
+        (isFinite(e1) && Math.abs(e1 - Math.round(e1)) > 1e-10) ||
+        (isFinite(e2) && Math.abs(e2 - Math.round(e2)) > 1e-10);
+      if (negative || nonInt) return straddlesZero(evalAst(node[1], env1), evalAst(node[1], env2));
+      return false;
+    }
+    if (op === "tan") return crossesTanPole(evalAst(node[1], env1), evalAst(node[1], env2));
+    if (op === "ln" || op === "log") {
+      var arg = node[1];
+      if (Array.isArray(arg) && arg[0] === "abs") {
+        return straddlesZero(evalAst(arg[1], env1), evalAst(arg[1], env2));
+      }
+      var a1 = evalAst(arg, env1);
+      var a2 = evalAst(arg, env2);
+      return !(a1 > 0) || !(a2 > 0);
+    }
+    return false;
+  }
+
+  function hasSingularityBetween(node, name, t1, t2) {
+    var extra1 = {};
+    var extra2 = {};
+    extra1[name] = t1;
+    extra2[name] = t2;
+    return nodeHasSingularity(node, envWith(extra1), envWith(extra2));
+  }
+
+  function outsideDrawPad(v, lo, hi) {
+    var pad = (hi - lo) * 0.2;
+    return !isFinite(v) || v > hi + pad || v < lo - pad;
+  }
+
+  function clipToDrawPad(v, lo, hi) {
+    var pad = (hi - lo) * 0.2;
+    if (v > hi + pad) return hi + pad;
+    if (v < lo - pad) return lo - pad;
+    return v;
+  }
+
   function drawExplicit() {
     var s = size();
     var sampleAlongX = spec.dependent !== spec.xAxis;
     var n = Math.max(400, sampleAlongX ? s.w * 2 : s.h * 2);
-    var xPad = (view.xmax - view.xmin) * 0.02;
-    var yPad = (view.ymax - view.ymin) * 0.02;
+    var depLo = sampleAlongX ? view.ymin : view.xmin;
+    var depHi = sampleAlongX ? view.ymax : view.xmax;
+    var gapLo = depLo - (depHi - depLo) * 0.02;
+    var gapHi = depHi + (depHi - depLo) * 0.02;
+    var indepName = spec.independent;
+    var pts = [];
+    var i, j, extra, t, r, p, prev, sing, gap, xs, ys, cd;
+
+    for (i = 0; i <= n; i++) {
+      extra = {};
+      t = sampleAlongX ? wx((i / n) * s.w) : wy((i / n) * s.h);
+      extra[indepName] = t;
+      pts.push({ t: t, y: evalAst(spec.rhs, envWith(extra)) });
+    }
+
+    function indepPx(v) {
+      return sampleAlongX ? sx(v) : sy(v);
+    }
+
+    var runs = [];
+    var run = [];
+    function flush() {
+      if (run.length >= 2) runs.push(run);
+      run = [];
+    }
+
+    for (i = 0; i < pts.length; i++) {
+      p = pts[i];
+      if (!isFinite(p.y)) {
+        flush();
+        continue;
+      }
+      if (run.length) {
+        prev = run[run.length - 1];
+        sing = hasSingularityBetween(spec.rhs, indepName, prev.t, p.t);
+        gap = crossesVisibleGap(prev.y, p.y, gapLo, gapHi) || jumpsAcrossView(prev.y, p.y, depLo, depHi);
+        if (sing || gap) flush();
+      }
+      if (outsideDrawPad(p.y, depLo, depHi)) {
+        if (run.length) {
+          run.push(p);
+          flush();
+        }
+        continue;
+      }
+      run.push(p);
+    }
+    flush();
+
+    var span = depHi - depLo;
+    var kept = [];
+    for (i = 0; i < runs.length; i++) {
+      r = runs[i];
+      var yMin = Infinity;
+      var yMax = -Infinity;
+      for (j = 0; j < r.length; j++) {
+        if (r[j].y < yMin) yMin = r[j].y;
+        if (r[j].y > yMax) yMax = r[j].y;
+      }
+      var pxw = Math.abs(indepPx(r[r.length - 1].t) - indepPx(r[0].t));
+      var transits = yMin < depLo + span * 0.2 && yMax > depHi - span * 0.2;
+      if (transits && pxw < 8) continue;
+      kept.push(r);
+    }
+
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 2.25;
     ctx.beginPath();
-    var started = false;
-    var prevDep = null;
-    var i, extra, t, fv, xs, ys, dep;
-    for (i = 0; i <= n; i++) {
-      extra = {};
-      if (sampleAlongX) {
-        t = wx((i / n) * s.w);
-        extra[spec.independent] = t;
-        fv = evalAst(spec.rhs, envWith(extra));
-        if (!isFinite(fv)) {
-          started = false;
-          prevDep = null;
-          continue;
+    for (i = 0; i < kept.length; i++) {
+      r = kept[i];
+      for (j = 0; j < r.length; j++) {
+        cd = clipToDrawPad(r[j].y, depLo, depHi);
+        if (sampleAlongX) {
+          xs = sx(r[j].t);
+          ys = sy(cd);
+        } else {
+          xs = sx(cd);
+          ys = sy(r[j].t);
         }
-        dep = fv;
-        xs = sx(t);
-        ys = sy(fv);
-      } else {
-        t = wy((i / n) * s.h);
-        extra[spec.independent] = t;
-        fv = evalAst(spec.rhs, envWith(extra));
-        if (!isFinite(fv)) {
-          started = false;
-          prevDep = null;
-          continue;
-        }
-        dep = fv;
-        xs = sx(fv);
-        ys = sy(t);
+        if (j === 0) ctx.moveTo(xs, ys);
+        else ctx.lineTo(xs, ys);
       }
-      if (started && prevDep != null) {
-        var gap = sampleAlongX
-          ? crossesVisibleGap(prevDep, dep, view.ymin - yPad, view.ymax + yPad)
-          : crossesVisibleGap(prevDep, dep, view.xmin - xPad, view.xmax + xPad);
-        if (gap) {
-          started = false;
-        }
-      }
-      if (!started) {
-        ctx.moveTo(xs, ys);
-        started = true;
-      } else {
-        ctx.lineTo(xs, ys);
-      }
-      prevDep = dep;
     }
     ctx.stroke();
   }
@@ -650,8 +854,40 @@
     draw();
   }
 
+  function typesetEquation(el) {
+    if (!el) return;
+    function go() {
+      if (window.MathJax && MathJax.typesetPromise) {
+        try {
+          if (MathJax.typesetClear) MathJax.typesetClear([el]);
+        } catch (err) {}
+        MathJax.typesetPromise([el]).catch(function () {});
+        return;
+      }
+      if (window.MathJax && MathJax.startup && MathJax.startup.promise) {
+        MathJax.startup.promise.then(go).catch(function () {});
+        return;
+      }
+      setTimeout(go, 40);
+    }
+    go();
+  }
+
+  function renderPanelEquation() {
+    var el = document.getElementById("panel-eq");
+    if (!el) return;
+    var latex = payload && payload.latex ? payload.latex : astToLatex(payload && payload.ast);
+    var flat = payload && payload.flat ? payload.flat : "";
+    if (latex) {
+      el.innerHTML = "\\(" + latex + "\\)";
+      typesetEquation(el);
+    } else {
+      el.textContent = flat;
+    }
+  }
+
   function buildSliders() {
-    document.getElementById("panel-eq").textContent = payload && payload.flat ? payload.flat : "";
+    renderPanelEquation();
     var box = document.getElementById("panel-sliders");
     box.innerHTML = "";
     if (!spec || !spec.params.length) {

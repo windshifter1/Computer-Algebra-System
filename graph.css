@@ -131,10 +131,34 @@ html, body {
 }
 
 #panel-eq {
-  padding: 8px 12px 4px;
-  font-size: 13px;
-  font-weight: 650;
-  word-break: break-word;
+  padding: 8px 12px 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: #141821;
+  scrollbar-width: thin;
+  scrollbar-color: #c9d1de transparent;
+}
+
+#panel-eq::-webkit-scrollbar {
+  height: 6px;
+}
+
+#panel-eq::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#panel-eq::-webkit-scrollbar-thumb {
+  background: #c9d1de;
+  border-radius: 999px;
+}
+
+#panel-eq mjx-container {
+  display: inline-block !important;
+  margin: 0 !important;
+  max-width: 100%;
 }
 
 #panel-sliders {
