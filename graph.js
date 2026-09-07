@@ -7,7 +7,7 @@
     if (!isFinite(x)) return NaN;
     // Math.tan(π/2) is a huge finite number, not NaN/Infinity.
     var halfTurns = x / Math.PI - 0.5;
-    if (Math.abs(halfTurns - Math.round(halfTurns)) < 1e-10) return NaN;
+    if (Math.abs(halfTurns - Math.round(halfTurns)) < 1e-8) return NaN;
     var t = Math.tan(x);
     return isFinite(t) ? t : NaN;
   }
@@ -540,15 +540,43 @@
     }
   }
 
-  function crossesVisibleGap(prev, next, lo, hi) {
-    // True when consecutive samples sit on opposite sides of the visible
-    // range — the usual signature of a vertical/horizontal asymptote bridge.
-    return (prev > hi && next < lo) || (prev < lo && next > hi);
+  function likelyPoleJump(y1, y2, lo, hi) {
+    if (!isFinite(y1) || !isFinite(y2)) return true;
+    var span = hi - lo;
+    if (!(span > 0)) return false;
+    var opposite = y1 > 0 !== y2 > 0;
+    var bothFar = Math.abs(y1) > span * 0.5 && Math.abs(y2) > span * 0.5;
+    return opposite && bothFar && Math.abs(y1 - y2) > span * 0.75;
   }
 
-  function jumpsAcrossView(prev, next, lo, hi) {
-    if (!isFinite(prev) || !isFinite(next)) return true;
-    return Math.abs(next - prev) > (hi - lo) * 0.75;
+  function mixEnv(env1, env2, u) {
+    var env = {};
+    var k;
+    for (k in env1) {
+      if (typeof env1[k] === "number" && typeof env2[k] === "number") {
+        env[k] = env1[k] + (env2[k] - env1[k]) * u;
+      } else {
+        env[k] = env1[k];
+      }
+    }
+    return env;
+  }
+
+  function denomTouchesZero(d1, d2, node, env1, env2) {
+    if (!isFinite(d1) || !isFinite(d2) || d1 === 0 || d2 === 0) return true;
+    if (d1 > 0 !== d2 > 0) return true;
+    var us = [0.2, 0.4, 0.5, 0.6, 0.8];
+    var i, d, mag;
+    var endMin = Math.min(Math.abs(d1), Math.abs(d2));
+    var endMax = Math.max(Math.abs(d1), Math.abs(d2));
+    for (i = 0; i < us.length; i++) {
+      d = evalAst(node, mixEnv(env1, env2, us[i]));
+      if (!isFinite(d) || d === 0) return true;
+      if (d > 0 !== d1 > 0) return true;
+      mag = Math.abs(d);
+      if (mag < endMin * 0.25 && mag < endMax * 0.05) return true;
+    }
+    return false;
   }
 
   function straddlesZero(a, b) {
@@ -573,7 +601,7 @@
       if (nodeHasSingularity(node[i], env1, env2)) return true;
     }
     var op = node[0];
-    if (op === "/") return straddlesZero(evalAst(node[2], env1), evalAst(node[2], env2));
+    if (op === "/") return denomTouchesZero(evalAst(node[2], env1), evalAst(node[2], env2), node[2], env1, env2);
     if (op === "^") {
       var e1 = evalAst(node[2], env1);
       var e2 = evalAst(node[2], env2);
@@ -581,19 +609,44 @@
       var nonInt =
         (isFinite(e1) && Math.abs(e1 - Math.round(e1)) > 1e-10) ||
         (isFinite(e2) && Math.abs(e2 - Math.round(e2)) > 1e-10);
-      if (negative || nonInt) return straddlesZero(evalAst(node[1], env1), evalAst(node[1], env2));
+      if (negative || nonInt) {
+        return denomTouchesZero(evalAst(node[1], env1), evalAst(node[1], env2), node[1], env1, env2);
+      }
       return false;
     }
     if (op === "tan") return crossesTanPole(evalAst(node[1], env1), evalAst(node[1], env2));
     if (op === "ln" || op === "log") {
       var arg = node[1];
       if (Array.isArray(arg) && arg[0] === "abs") {
-        return straddlesZero(evalAst(arg[1], env1), evalAst(arg[1], env2));
+        return denomTouchesZero(evalAst(arg[1], env1), evalAst(arg[1], env2), arg[1], env1, env2);
       }
       var a1 = evalAst(arg, env1);
       var a2 = evalAst(arg, env2);
       return !(a1 > 0) || !(a2 > 0);
     }
+    if (op === "sqrt") {
+      var s1 = evalAst(node[1], env1);
+      var s2 = evalAst(node[1], env2);
+      return !(s1 >= 0) || !(s2 >= 0);
+    }
+    if (op === "arcsin" || op === "arccos") {
+      var r1 = evalAst(node[1], env1);
+      var r2 = evalAst(node[1], env2);
+      return !(Math.abs(r1) <= 1) || !(Math.abs(r2) <= 1);
+    }
+    if (op === "floor" || op === "ceil") {
+      var f1 = evalAst(node[1], env1);
+      var f2 = evalAst(node[1], env2);
+      if (!isFinite(f1) || !isFinite(f2)) return true;
+      return Math.floor(f1) !== Math.floor(f2);
+    }
+    if (op === "round") {
+      var g1 = evalAst(node[1], env1);
+      var g2 = evalAst(node[1], env2);
+      if (!isFinite(g1) || !isFinite(g2)) return true;
+      return Math.round(g1) !== Math.round(g2);
+    }
+    if (op === "sign") return straddlesZero(evalAst(node[1], env1), evalAst(node[1], env2));
     return false;
   }
 
@@ -605,104 +658,193 @@
     return nodeHasSingularity(node, envWith(extra1), envWith(extra2));
   }
 
-  function outsideDrawPad(v, lo, hi) {
-    var pad = (hi - lo) * 0.2;
-    return !isFinite(v) || v > hi + pad || v < lo - pad;
+  function lerpT(t1, y1, t2, y2, y) {
+    if (y2 === y1) return t1;
+    return t1 + (t2 - t1) * ((y - y1) / (y2 - y1));
   }
 
-  function clipToDrawPad(v, lo, hi) {
-    var pad = (hi - lo) * 0.2;
-    if (v > hi + pad) return hi + pad;
-    if (v < lo - pad) return lo - pad;
-    return v;
+  function clipSegToY(t1, y1, t2, y2, lo, hi) {
+    if (!isFinite(t1) || !isFinite(t2) || !isFinite(y1) || !isFinite(y2)) return null;
+    var aT = t1;
+    var aY = y1;
+    var bT = t2;
+    var bY = y2;
+    function code(y) {
+      return (y < lo ? 1 : 0) | (y > hi ? 2 : 0);
+    }
+    var c1 = code(aY);
+    var c2 = code(bY);
+    var g = 0;
+    var c;
+    var y;
+    var t;
+    while (g++ < 8) {
+      if (!(c1 | c2)) return [{ t: aT, y: aY }, { t: bT, y: bY }];
+      if (c1 & c2) return null;
+      // Opposite sides of the window in one step is a pole-like jump, not a
+      // curve through the view. Subdivision should already have placed
+      // in-window samples if the function is merely steep.
+      if ((c1 | c2) === 3) return null;
+      c = c1 || c2;
+      y = c & 1 ? lo : hi;
+      t = lerpT(aT, aY, bT, bY, y);
+      if (c === c1) {
+        aT = t;
+        aY = y;
+        c1 = code(aY);
+      } else {
+        bT = t;
+        bY = y;
+        c2 = code(bY);
+      }
+    }
+    return null;
+  }
+
+  function evalIndep(name, t) {
+    var extra = {};
+    extra[name] = t;
+    return evalAst(spec.rhs, envWith(extra));
+  }
+
+  function pairBroken(a, b, name, lo, hi) {
+    if (!isFinite(a.y) || !isFinite(b.y)) return true;
+    if (hasSingularityBetween(spec.rhs, name, a.t, b.t)) return true;
+    return likelyPoleJump(a.y, b.y, lo, hi);
+  }
+
+  function approachDefined(t0, y0, tGoal, name, lo, hi) {
+    var t = t0;
+    var y = y0;
+    var limit = tGoal;
+    var k, mid, ym;
+    for (k = 0; k < 20; k++) {
+      mid = t + (limit - t) / 2;
+      ym = evalIndep(name, mid);
+      if (pairBroken({ t: t, y: y }, { t: mid, y: ym }, name, lo, hi)) limit = mid;
+      else {
+        t = mid;
+        y = ym;
+      }
+    }
+    return { t: t, y: y };
+  }
+
+  function sameSideOutside(y1, y2, lo, hi) {
+    return (y1 > hi && y2 > hi) || (y1 < lo && y2 < lo);
   }
 
   function drawExplicit() {
     var s = size();
     var sampleAlongX = spec.dependent !== spec.xAxis;
-    var n = Math.max(400, sampleAlongX ? s.w * 2 : s.h * 2);
+    var n = Math.max(800, sampleAlongX ? s.w * 3 : s.h * 3);
     var depLo = sampleAlongX ? view.ymin : view.xmin;
     var depHi = sampleAlongX ? view.ymax : view.xmax;
-    var gapLo = depLo - (depHi - depLo) * 0.02;
-    var gapHi = depHi + (depHi - depLo) * 0.02;
+    var span = depHi - depLo;
     var indepName = spec.independent;
+    var indepSpan = sampleAlongX ? view.xmax - view.xmin : view.ymax - view.ymin;
+    var minDt = indepSpan / Math.max(s.w, s.h, 1) / 8;
     var pts = [];
-    var i, j, extra, t, r, p, prev, sing, gap, xs, ys, cd;
+    var i, extra, t, a, b, clipped, xy, p;
+
+    function sampleAt(tt) {
+      extra = {};
+      extra[indepName] = tt;
+      return { t: tt, y: evalAst(spec.rhs, envWith(extra)) };
+    }
 
     for (i = 0; i <= n; i++) {
-      extra = {};
       t = sampleAlongX ? wx((i / n) * s.w) : wy((i / n) * s.h);
-      extra[indepName] = t;
-      pts.push({ t: t, y: evalAst(spec.rhs, envWith(extra)) });
+      pts.push(sampleAt(t));
     }
 
-    function indepPx(v) {
-      return sampleAlongX ? sx(v) : sy(v);
+    function shouldSplit(p1, p2) {
+      if (!(Math.abs(p2.t - p1.t) > minDt)) return false;
+      if (!isFinite(p1.y) || !isFinite(p2.y)) return true;
+      if (sameSideOutside(p1.y, p2.y, depLo, depHi)) return false;
+      if (hasSingularityBetween(spec.rhs, indepName, p1.t, p2.t)) return true;
+      if (likelyPoleJump(p1.y, p2.y, depLo, depHi)) return true;
+      return Math.abs(p1.y - p2.y) > span * 0.12;
     }
 
-    var runs = [];
-    var run = [];
-    function flush() {
-      if (run.length >= 2) runs.push(run);
-      run = [];
-    }
-
-    for (i = 0; i < pts.length; i++) {
-      p = pts[i];
-      if (!isFinite(p.y)) {
-        flush();
-        continue;
-      }
-      if (run.length) {
-        prev = run[run.length - 1];
-        sing = hasSingularityBetween(spec.rhs, indepName, prev.t, p.t);
-        gap = crossesVisibleGap(prev.y, p.y, gapLo, gapHi) || jumpsAcrossView(prev.y, p.y, depLo, depHi);
-        if (sing || gap) flush();
-      }
-      if (outsideDrawPad(p.y, depLo, depHi)) {
-        if (run.length) {
-          run.push(p);
-          flush();
+    var pass, next, inserted;
+    for (pass = 0; pass < 8; pass++) {
+      next = [pts[0]];
+      inserted = 0;
+      for (i = 1; i < pts.length; i++) {
+        a = next[next.length - 1];
+        b = pts[i];
+        if (inserted + pts.length < 14000 && shouldSplit(a, b)) {
+          next.push(sampleAt((a.t + b.t) / 2));
+          inserted++;
         }
-        continue;
+        next.push(b);
       }
-      run.push(p);
+      pts = next;
+      if (!inserted) break;
     }
-    flush();
 
-    var span = depHi - depLo;
-    var kept = [];
-    for (i = 0; i < runs.length; i++) {
-      r = runs[i];
-      var yMin = Infinity;
-      var yMax = -Infinity;
-      for (j = 0; j < r.length; j++) {
-        if (r[j].y < yMin) yMin = r[j].y;
-        if (r[j].y > yMax) yMax = r[j].y;
-      }
-      var pxw = Math.abs(indepPx(r[r.length - 1].t) - indepPx(r[0].t));
-      var transits = yMin < depLo + span * 0.2 && yMax > depHi - span * 0.2;
-      if (transits && pxw < 8) continue;
-      kept.push(r);
+    function toXY(pt) {
+      if (sampleAlongX) return { x: sx(pt.t), y: sy(pt.y) };
+      return { x: sx(pt.y), y: sy(pt.t) };
     }
 
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 2.25;
     ctx.beginPath();
-    for (i = 0; i < kept.length; i++) {
-      r = kept[i];
-      for (j = 0; j < r.length; j++) {
-        cd = clipToDrawPad(r[j].y, depLo, depHi);
-        if (sampleAlongX) {
-          xs = sx(r[j].t);
-          ys = sy(cd);
-        } else {
-          xs = sx(cd);
-          ys = sy(r[j].t);
-        }
-        if (j === 0) ctx.moveTo(xs, ys);
-        else ctx.lineTo(xs, ys);
+    var pen = null;
+
+    function lineDraw(pt) {
+      xy = toXY(pt);
+      if (!pen) ctx.moveTo(xy.x, xy.y);
+      else ctx.lineTo(xy.x, xy.y);
+      pen = xy;
+    }
+
+    function lift() {
+      pen = null;
+    }
+
+    function emitClip(p1, p2) {
+      clipped = clipSegToY(p1.t, p1.y, p2.t, p2.y, depLo, depHi);
+      if (!clipped) {
+        lift();
+        return;
       }
+      xy = toXY(clipped[0]);
+      var xy2 = toXY(clipped[1]);
+      var dxPx = Math.abs(xy2.x - xy.x);
+      var dyPx = Math.abs(xy2.y - xy.y);
+      if (dxPx < 2.2 && dyPx > 32) {
+        var yA = clipped[0].y;
+        var yB = clipped[1].y;
+        var nearEdge =
+          depHi - Math.max(yA, yB) < span * 0.12 || Math.min(yA, yB) - depLo < span * 0.12;
+        if (!(nearEdge && Math.abs(yA - yB) < span * 0.22)) {
+          lift();
+          return;
+        }
+      }
+      lineDraw(clipped[0]);
+      lineDraw(clipped[1]);
+    }
+
+    for (i = 1; i < pts.length; i++) {
+      a = pts[i - 1];
+      b = pts[i];
+      if (pairBroken(a, b, indepName, depLo, depHi)) {
+        if (isFinite(a.y)) {
+          p = approachDefined(a.t, a.y, b.t, indepName, depLo, depHi);
+          emitClip(a, p);
+        }
+        lift();
+        if (isFinite(b.y)) {
+          p = approachDefined(b.t, b.y, a.t, indepName, depLo, depHi);
+          emitClip(p, b);
+        }
+        continue;
+      }
+      emitClip(a, b);
     }
     ctx.stroke();
   }
