@@ -1,18 +1,28 @@
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "cas-windows-v2";
-  const DEFAULT_POPUP = { width: 560, height: 440 };
-  const MIN_POPUP = { width: 280, height: 200 };
-  const ZONE_EDGE = 0.28;
+  const STORAGE_KEY = "cas-windows-v3";
+  const MIN_PCT = { w: 18, h: 20 };
+  const CUT = 25;
+  const SNAP = {
+    left: { x: 0, y: 0, w: 50, h: 100, label: "Left 50%" },
+    right: { x: 50, y: 0, w: 50, h: 100, label: "Right 50%" },
+    top: { x: 0, y: 0, w: 100, h: 50, label: "Top 50%" },
+    bottom: { x: 0, y: 50, w: 100, h: 50, label: "Bottom 50%" },
+    float: { x: 22, y: 16, w: 42, h: 55, label: "Float" },
+  };
+  const COMPLEMENT = {
+    left: { x: 50, y: 0, w: 50, h: 100 },
+    right: { x: 0, y: 0, w: 50, h: 100 },
+    top: { x: 0, y: 50, w: 100, h: 50 },
+    bottom: { x: 0, y: 0, w: 100, h: 50 },
+  };
 
   let state = {
     nextTab: 1,
     nextGroup: 1,
     tabs: [],
     groups: {},
-    dockIds: [],
-    dockOrientation: "horizontal",
     focusedGroupId: null,
     zTop: 20,
   };
@@ -22,9 +32,21 @@
   const groupEls = new Map();
   let dragging = null;
   let ignoreNextClick = false;
+  let ignoreClickTimer = 0;
+  let overlayOn = true;
+  let snapKind = null;
 
   function tabUid() {
     return "w" + state.nextTab++;
+  }
+
+  function ignoreClicks(ms) {
+    ignoreNextClick = true;
+    if (ignoreClickTimer) window.clearTimeout(ignoreClickTimer);
+    ignoreClickTimer = window.setTimeout(function () {
+      ignoreNextClick = false;
+      ignoreClickTimer = 0;
+    }, ms || 320);
   }
 
   function groupUid() {
@@ -43,10 +65,346 @@
     });
   }
 
-  function dockGroups() {
-    return state.dockIds.filter(function (id) {
-      return state.groups[id] && state.groups[id].kind === "dock";
+  function clamp(n, lo, hi) {
+    return Math.min(hi, Math.max(lo, n));
+  }
+
+  function roundPct(n) {
+    return Math.round(n * 10) / 10;
+  }
+
+  function stageSize() {
+    const r = els.windows.getBoundingClientRect();
+    return { w: r.width || 1, h: r.height || 1, left: r.left, top: r.top };
+  }
+
+  function pointerPct(clientX, clientY) {
+    const s = stageSize();
+    return {
+      x: ((clientX - s.left) / s.w) * 100,
+      y: ((clientY - s.top) / s.h) * 100,
+    };
+  }
+
+  function sizeRect(r) {
+    return {
+      x: roundPct(r.x),
+      y: roundPct(r.y),
+      w: roundPct(clamp(r.w, MIN_PCT.w, 100)),
+      h: roundPct(clamp(r.h, MIN_PCT.h, 100)),
+    };
+  }
+
+  function floatRectAt(px, py) {
+    return sizeRect({
+      x: px - SNAP.float.w / 2,
+      y: py - 8,
+      w: SNAP.float.w,
+      h: SNAP.float.h,
     });
+  }
+
+  function normalizeRect(r) {
+    const next = {
+      x: roundPct(clamp(r.x, 0, 100)),
+      y: roundPct(clamp(r.y, 0, 100)),
+      w: roundPct(clamp(r.w, MIN_PCT.w, 100)),
+      h: roundPct(clamp(r.h, MIN_PCT.h, 100)),
+    };
+    if (next.x + next.w > 100) next.x = roundPct(100 - next.w);
+    if (next.y + next.h > 100) next.y = roundPct(100 - next.h);
+    next.x = clamp(next.x, 0, 100 - next.w);
+    next.y = clamp(next.y, 0, 100 - next.h);
+    return next;
+  }
+
+  function sameRect(a, b) {
+    return a && b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+  }
+
+  function isDock(g) {
+    return g && g.kind !== "popup";
+  }
+
+  const TILE_EPS = 0.15;
+
+  function dockList() {
+    return Object.keys(state.groups)
+      .map(function (id) {
+        return state.groups[id];
+      })
+      .filter(isDock);
+  }
+
+  function rectArea(r) {
+    return Math.max(0, r.w) * Math.max(0, r.h);
+  }
+
+  function assignRect(g, r) {
+    g.x = roundPct(r.x);
+    g.y = roundPct(r.y);
+    g.w = roundPct(r.w);
+    g.h = roundPct(r.h);
+  }
+
+  function intersection(a, b) {
+    const x = Math.max(a.x, b.x);
+    const y = Math.max(a.y, b.y);
+    const x1 = Math.min(a.x + a.w, b.x + b.w);
+    const y1 = Math.min(a.y + a.h, b.y + b.h);
+    if (x1 - x <= TILE_EPS || y1 - y <= TILE_EPS) return null;
+    return { x: x, y: y, w: x1 - x, h: y1 - y };
+  }
+
+  function containsRect(outer, inner) {
+    return (
+      inner.x >= outer.x - TILE_EPS &&
+      inner.y >= outer.y - TILE_EPS &&
+      inner.x + inner.w <= outer.x + outer.w + TILE_EPS &&
+      inner.y + inner.h <= outer.y + outer.h + TILE_EPS
+    );
+  }
+
+  function subtractRect(a, b) {
+    const hit = intersection(a, b);
+    if (!hit) return [{ x: a.x, y: a.y, w: a.w, h: a.h }];
+    if (containsRect(b, a)) return [];
+    const parts = [];
+    const ax1 = a.x + a.w;
+    const ay1 = a.y + a.h;
+    const ix1 = hit.x + hit.w;
+    const iy1 = hit.y + hit.h;
+    if (hit.x > a.x + TILE_EPS) parts.push({ x: a.x, y: a.y, w: hit.x - a.x, h: a.h });
+    if (ix1 < ax1 - TILE_EPS) parts.push({ x: ix1, y: a.y, w: ax1 - ix1, h: a.h });
+    if (hit.y > a.y + TILE_EPS) parts.push({ x: hit.x, y: a.y, w: hit.w, h: hit.y - a.y });
+    if (iy1 < ay1 - TILE_EPS) parts.push({ x: hit.x, y: iy1, w: hit.w, h: ay1 - iy1 });
+    return parts.filter(function (p) {
+      return p.w > TILE_EPS && p.h > TILE_EPS;
+    });
+  }
+
+  function mergeDockInto(fromId, intoId) {
+    if (!fromId || !intoId || fromId === intoId) return;
+    if (!state.groups[fromId] || !state.groups[intoId]) return;
+    tabsIn(fromId).forEach(function (t) {
+      t.groupId = intoId;
+    });
+    const tabs = tabsIn(intoId);
+    if (tabs.length && !tabs.some(function (t) {
+      return t.id === state.groups[intoId].activeId;
+    })) {
+      state.groups[intoId].activeId = tabs[0].id;
+    }
+    if (state.focusedGroupId === fromId) state.focusedGroupId = intoId;
+    removeGroup(fromId);
+  }
+
+  function tessellateDocks(docks) {
+    const ordered = docks.slice().sort(function (a, b) {
+      return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+    });
+    for (let i = ordered.length - 1; i >= 0; i--) {
+      const cut = ordered[i];
+      if (!state.groups[cut.id]) continue;
+      for (let j = 0; j < i; j++) {
+        const g = ordered[j];
+        if (!state.groups[g.id]) continue;
+        const parts = subtractRect(g, cut);
+        if (!parts.length) {
+          mergeDockInto(g.id, cut.id);
+          continue;
+        }
+        parts.sort(function (a, b) {
+          return rectArea(b) - rectArea(a);
+        });
+        assignRect(g, parts[0]);
+      }
+    }
+  }
+
+  function emptyRects(docks) {
+    let empty = [{ x: 0, y: 0, w: 100, h: 100 }];
+    docks.forEach(function (d) {
+      const next = [];
+      empty.forEach(function (hole) {
+        subtractRect(hole, d).forEach(function (p) {
+          if (p.w > 0.5 && p.h > 0.5) next.push(p);
+        });
+      });
+      empty = next;
+    });
+    return empty;
+  }
+
+  function growInto(g, hole) {
+    const gx1 = g.x + g.w;
+    const gy1 = g.y + g.h;
+    const hx1 = hole.x + hole.w;
+    const hy1 = hole.y + hole.h;
+    if (Math.abs(hx1 - g.x) <= TILE_EPS && hole.y <= g.y + TILE_EPS && hy1 >= gy1 - TILE_EPS && hole.x < g.x - TILE_EPS) {
+      return "left";
+    }
+    if (Math.abs(hole.x - gx1) <= TILE_EPS && hole.y <= g.y + TILE_EPS && hy1 >= gy1 - TILE_EPS && hx1 > gx1 + TILE_EPS) {
+      return "right";
+    }
+    if (Math.abs(hy1 - g.y) <= TILE_EPS && hole.x <= g.x + TILE_EPS && hx1 >= gx1 - TILE_EPS && hole.y < g.y - TILE_EPS) {
+      return "up";
+    }
+    if (Math.abs(hole.y - gy1) <= TILE_EPS && hole.x <= g.x + TILE_EPS && hx1 >= gx1 - TILE_EPS && hy1 > gy1 + TILE_EPS) {
+      return "down";
+    }
+    return null;
+  }
+
+  function applyGrow(g, hole, dir) {
+    if (dir === "left") {
+      g.w = roundPct(g.x + g.w - hole.x);
+      g.x = roundPct(hole.x);
+    } else if (dir === "right") {
+      g.w = roundPct(hole.x + hole.w - g.x);
+    } else if (dir === "up") {
+      g.h = roundPct(g.y + g.h - hole.y);
+      g.y = roundPct(hole.y);
+    } else if (dir === "down") {
+      g.h = roundPct(hole.y + hole.h - g.y);
+    }
+  }
+
+  function absorbHole(hole, docks) {
+    const growers = [];
+    docks.forEach(function (g) {
+      const dir = growInto(g, hole);
+      if (dir) growers.push({ g: g, dir: dir });
+    });
+    if (!growers.length) return false;
+    const byDir = { left: [], right: [], up: [], down: [] };
+    growers.forEach(function (it) {
+      byDir[it.dir].push(it.g);
+    });
+    const axisH = byDir.left.length + byDir.right.length;
+    const axisV = byDir.up.length + byDir.down.length;
+    if (byDir.left.length && byDir.right.length && !axisV) {
+      const mid = roundPct(hole.x + hole.w / 2);
+      const leftSlice = { x: hole.x, y: hole.y, w: mid - hole.x, h: hole.h };
+      const rightSlice = { x: mid, y: hole.y, w: hole.x + hole.w - mid, h: hole.h };
+      byDir.right.forEach(function (g) {
+        applyGrow(g, leftSlice, "right");
+      });
+      byDir.left.forEach(function (g) {
+        applyGrow(g, rightSlice, "left");
+      });
+      return true;
+    }
+    if (byDir.up.length && byDir.down.length && !axisH) {
+      const mid = roundPct(hole.y + hole.h / 2);
+      const topSlice = { x: hole.x, y: hole.y, w: hole.w, h: mid - hole.y };
+      const bottomSlice = { x: hole.x, y: mid, w: hole.w, h: hole.y + hole.h - mid };
+      byDir.down.forEach(function (g) {
+        applyGrow(g, topSlice, "down");
+      });
+      byDir.up.forEach(function (g) {
+        applyGrow(g, bottomSlice, "up");
+      });
+      return true;
+    }
+    growers.forEach(function (it) {
+      applyGrow(it.g, hole, it.dir);
+    });
+    return true;
+  }
+
+  function rangesOverlap(a0, a1, b0, b1, eps) {
+    return a0 < b1 - eps && a1 > b0 + eps;
+  }
+
+  function growDock(g, others) {
+    const EPS = TILE_EPS;
+    let grew = false;
+    const x1 = g.x + g.w;
+    const y1 = g.y + g.h;
+    let right = 100;
+    let left = 0;
+    let bottom = 100;
+    let top = 0;
+    others.forEach(function (o) {
+      if (rangesOverlap(g.y, y1, o.y, o.y + o.h, EPS)) {
+        if (o.x >= x1 - EPS) right = Math.min(right, o.x);
+        else if (o.x + o.w > x1 + EPS) right = Math.min(right, x1);
+        if (o.x + o.w <= g.x + EPS) left = Math.max(left, o.x + o.w);
+        else if (o.x < g.x - EPS) left = Math.max(left, g.x);
+      }
+      if (rangesOverlap(g.x, x1, o.x, o.x + o.w, EPS)) {
+        if (o.y >= y1 - EPS) bottom = Math.min(bottom, o.y);
+        else if (o.y + o.h > y1 + EPS) bottom = Math.min(bottom, y1);
+        if (o.y + o.h <= g.y + EPS) top = Math.max(top, o.y + o.h);
+        else if (o.y < g.y - EPS) top = Math.max(top, g.y);
+      }
+    });
+    if (right > x1 + EPS) {
+      g.w = roundPct(right - g.x);
+      grew = true;
+    }
+    if (left < g.x - EPS) {
+      g.w = roundPct(x1 - left);
+      g.x = roundPct(left);
+      grew = true;
+    }
+    if (bottom > y1 + EPS) {
+      g.h = roundPct(bottom - g.y);
+      grew = true;
+    }
+    if (top < g.y - EPS) {
+      g.h = roundPct(y1 - top);
+      g.y = roundPct(top);
+      grew = true;
+    }
+    return grew;
+  }
+
+  function fillDockGaps() {
+    let docks = dockList();
+    if (!docks.length) return;
+    if (docks.length === 1) {
+      assignRect(docks[0], { x: 0, y: 0, w: 100, h: 100 });
+      return;
+    }
+    tessellateDocks(docks);
+    docks = dockList();
+    if (docks.length === 1) {
+      assignRect(docks[0], { x: 0, y: 0, w: 100, h: 100 });
+      return;
+    }
+    let guard = 0;
+    while (guard++ < 24) {
+      const holes = emptyRects(docks);
+      if (!holes.length) return;
+      let absorbed = false;
+      for (let i = 0; i < holes.length; i++) {
+        if (absorbHole(holes[i], docks)) {
+          absorbed = true;
+          break;
+        }
+      }
+      if (absorbed) continue;
+      let grew = false;
+      docks.forEach(function (g) {
+        const others = docks.filter(function (o) {
+          return o !== g;
+        });
+        if (growDock(g, others)) grew = true;
+      });
+      if (!grew) return;
+    }
+  }
+
+  function groupByRect(rect) {
+    return Object.keys(state.groups).find(function (id) {
+      return sameRect(state.groups[id], rect);
+    });
+  }
+
+  function fmtRect(r) {
+    return r.x + "%, " + r.y + "%  ·  " + r.w + "×" + r.h + "%";
   }
 
   function save() {
@@ -55,16 +413,75 @@
     } catch (e) {}
   }
 
+  function migrateOld() {
+    try {
+      const raw = localStorage.getItem("cas-windows-v2");
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.tabs) || !parsed.tabs.length) return false;
+      const stage = { w: window.innerWidth - 16, h: window.innerHeight - 16 };
+      state.tabs = parsed.tabs;
+      state.nextTab = parsed.nextTab || 1;
+      state.nextGroup = parsed.nextGroup || 1;
+      state.focusedGroupId = parsed.focusedGroupId || null;
+      state.zTop = parsed.zTop || 20;
+      state.groups = {};
+      const docks = (parsed.dockIds || []).filter(function (id) {
+        return parsed.groups && parsed.groups[id] && parsed.groups[id].kind === "dock";
+      });
+      Object.keys(parsed.groups || {}).forEach(function (id) {
+        const src = parsed.groups[id];
+        const g = { id: id, kind: src.kind || "dock", activeId: src.activeId, z: src.z || 1 };
+        if (src.kind === "popup") {
+          const rect = sizeRect({
+            x: ((src.x || 0) / stage.w) * 100,
+            y: ((src.y || 0) / stage.h) * 100,
+            w: ((src.width || 560) / stage.w) * 100,
+            h: ((src.height || 440) / stage.h) * 100,
+          });
+          g.x = rect.x;
+          g.y = rect.y;
+          g.w = rect.w;
+          g.h = rect.h;
+        } else if (docks.length === 2 && docks[0] === id) {
+          Object.assign(g, parsed.dockOrientation === "vertical" ? { x: 0, y: 0, w: 100, h: 50 } : { x: 0, y: 0, w: 50, h: 100 });
+        } else if (docks.length === 2 && docks[1] === id) {
+          Object.assign(g, parsed.dockOrientation === "vertical" ? { x: 0, y: 50, w: 100, h: 50 } : { x: 50, y: 0, w: 50, h: 100 });
+        } else {
+          Object.assign(g, { x: 0, y: 0, w: 100, h: 100 });
+        }
+        state.groups[id] = g;
+      });
+      prune();
+      return state.tabs.length > 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
+      if (!raw) return migrateOld();
       const parsed = JSON.parse(raw);
       if (!parsed || !Array.isArray(parsed.tabs) || parsed.tabs.length === 0) return false;
       state = parsed;
       if (!state.groups) state.groups = {};
-      if (!state.dockIds) state.dockIds = [];
       if (!state.zTop) state.zTop = 20;
+      Object.keys(state.groups).forEach(function (id) {
+        const g = state.groups[id];
+        const fit = g.kind === "popup" ? sizeRect : normalizeRect;
+        const rect = fit({
+          x: g.x == null ? 0 : g.x,
+          y: g.y == null ? 0 : g.y,
+          w: g.w == null ? 100 : g.w,
+          h: g.h == null ? 100 : g.h,
+        });
+        g.x = rect.x;
+        g.y = rect.y;
+        g.w = rect.w;
+        g.h = rect.h;
+      });
       prune();
       return state.tabs.length > 0;
     } catch (e) {
@@ -75,12 +492,13 @@
   function prune() {
     let maxT = 0;
     let maxG = 0;
+    const ids = Object.keys(state.groups);
     state.tabs.forEach(function (t) {
       const n = parseInt(String(t.id).replace(/\D/g, ""), 10);
       if (n > maxT) maxT = n;
-      if (!state.groups[t.groupId]) t.groupId = state.dockIds[0] || Object.keys(state.groups)[0];
+      if (!state.groups[t.groupId]) t.groupId = ids[0];
     });
-    Object.keys(state.groups).forEach(function (id) {
+    ids.forEach(function (id) {
       const n = parseInt(String(id).replace(/\D/g, ""), 10);
       if (n > maxG) maxG = n;
     });
@@ -92,46 +510,42 @@
     Object.keys(state.groups).forEach(function (id) {
       if (!tabsIn(id).length) delete state.groups[id];
     });
-    state.dockIds = (state.dockIds || []).filter(function (id) {
-      return state.groups[id] && state.groups[id].kind === "dock";
-    });
     Object.keys(state.groups).forEach(function (id) {
       const g = state.groups[id];
       const tabs = tabsIn(id);
-      if (tabs.length && !tabs.some(function (t) { return t.id === g.activeId; })) {
+      if (tabs.length && !tabs.some(function (t) {
+        return t.id === g.activeId;
+      })) {
         g.activeId = tabs[0].id;
       }
     });
     if (!state.focusedGroupId || !state.groups[state.focusedGroupId]) {
-      state.focusedGroupId = state.dockIds[0] || Object.keys(state.groups)[0] || null;
+      state.focusedGroupId = Object.keys(state.groups)[0] || null;
     }
   }
 
-  function createGroup(kind) {
-    const g = { id: groupUid(), kind: kind, activeId: null };
-    if (kind === "popup") {
-      g.x = 48;
-      g.y = 48;
-      g.width = DEFAULT_POPUP.width;
-      g.height = DEFAULT_POPUP.height;
-      g.z = ++state.zTop;
-    }
+  function createGroup(kind, rect) {
+    const g = { id: groupUid(), kind: kind || "dock", activeId: null, z: 1 };
+    const fallback = kind === "popup" ? SNAP.float : { x: 0, y: 0, w: 100, h: 100 };
+    const next = (kind === "popup" ? sizeRect : normalizeRect)(rect || fallback);
+    g.x = next.x;
+    g.y = next.y;
+    g.w = next.w;
+    g.h = next.h;
+    if (kind === "popup") g.z = ++state.zTop;
     state.groups[g.id] = g;
     return g;
   }
 
   function removeGroup(gid) {
     delete state.groups[gid];
-    state.dockIds = state.dockIds.filter(function (id) {
-      return id !== gid;
-    });
     const el = groupEls.get(gid);
     if (el) {
       el.remove();
       groupEls.delete(gid);
     }
     if (state.focusedGroupId === gid) {
-      state.focusedGroupId = state.dockIds[0] || Object.keys(state.groups)[0] || null;
+      state.focusedGroupId = Object.keys(state.groups)[0] || null;
     }
   }
 
@@ -139,7 +553,8 @@
     let iframe = frames.get(tab.id);
     if (iframe) return iframe;
     iframe = document.createElement("iframe");
-    iframe.className = "wm-frame";
+    iframe.className = "wm-frame is-hidden";
+    iframe.dataset.windowId = tab.id;
     iframe.src =
       tab.kind === "graph" && tab.graphId
         ? "Graph.html?g=" + encodeURIComponent(tab.graphId)
@@ -190,6 +605,9 @@
       addTab(gid);
     });
 
+    const badge = document.createElement("div");
+    badge.className = "wm-pct-badge";
+
     strip.appendChild(tabs);
     strip.appendChild(add);
 
@@ -198,11 +616,11 @@
 
     const resize = document.createElement("div");
     resize.className = "wm-resize";
-    resize.hidden = true;
 
     group.appendChild(strip);
     group.appendChild(body);
     group.appendChild(resize);
+    group.appendChild(badge);
 
     group.addEventListener("pointerdown", function () {
       focusGroup(gid);
@@ -215,24 +633,30 @@
     });
 
     resize.addEventListener("pointerdown", function (e) {
+      if (!state.groups[gid] || state.groups[gid].kind !== "popup") return;
       e.preventDefault();
       e.stopPropagation();
       startPopupResize(e, gid);
     });
 
     tabs.addEventListener("click", function (e) {
+      const close = e.target.closest(".wm-tab-close");
+      const tabEl = e.target.closest(".wm-tab");
       if (ignoreNextClick) {
         ignoreNextClick = false;
+        if (ignoreClickTimer) {
+          window.clearTimeout(ignoreClickTimer);
+          ignoreClickTimer = 0;
+        }
         e.preventDefault();
         e.stopPropagation();
         return;
       }
-      const close = e.target.closest(".wm-tab-close");
-      const tabEl = e.target.closest(".wm-tab");
       if (!tabEl) return;
       if (close) {
         e.preventDefault();
         e.stopPropagation();
+        ignoreClicks(320);
         closeTab(tabEl.dataset.windowId);
         return;
       }
@@ -241,36 +665,77 @@
 
     tabs.addEventListener("pointerdown", function (e) {
       if (e.button !== 0) return;
-      if (e.target.closest(".wm-tab-close")) return;
+      const close = e.target.closest(".wm-tab-close");
+      if (close) {
+        e.preventDefault();
+        e.stopPropagation();
+        const tabEl = close.closest(".wm-tab");
+        const id = tabEl && tabEl.dataset.windowId;
+        const pointerId = e.pointerId;
+        function onCloseUp(ev) {
+          if (ev.pointerId !== pointerId) return;
+          document.removeEventListener("pointerup", onCloseUp, true);
+          document.removeEventListener("pointercancel", onCloseUp, true);
+          if (ev.type === "pointercancel" || !id) return;
+          const top = document.elementFromPoint(ev.clientX, ev.clientY);
+          if (!top || !close.isConnected || !close.contains(top)) return;
+          ignoreClicks(320);
+          closeTab(id);
+        }
+        document.addEventListener("pointerup", onCloseUp, true);
+        document.addEventListener("pointercancel", onCloseUp, true);
+        return;
+      }
       const tabEl = e.target.closest(".wm-tab");
       if (!tabEl) return;
       const pointerId = e.pointerId;
-      const start = { x: e.clientX, y: e.clientY, started: false };
+      const rect = tabEl.getBoundingClientRect();
+      const start = {
+        x: e.clientX,
+        y: e.clientY,
+        started: false,
+        grabX: e.clientX - rect.left,
+        grabY: e.clientY - rect.top,
+        originLeft: rect.left,
+        pointerId: pointerId,
+      };
       function onMove(ev) {
+        if (ev.pointerId !== pointerId) return;
+        if (ev.buttons === 0) {
+          onUp(ev);
+          return;
+        }
         const dx = ev.clientX - start.x;
         const dy = ev.clientY - start.y;
         if (!start.started) {
           if (dx * dx + dy * dy < 36) return;
           start.started = true;
-          beginTabDrag(tabEl, ev.clientX, ev.clientY);
+          beginTabDrag(tabEl, ev.clientX, ev.clientY, start);
         }
-        updateTabDrag(ev.clientX, ev.clientY);
+        queueTabDrag(ev.clientX, ev.clientY);
       }
-      function onUp() {
-        tabEl.removeEventListener("pointermove", onMove);
-        tabEl.removeEventListener("pointerup", onUp);
-        tabEl.removeEventListener("pointercancel", onUp);
+      function onUp(ev) {
+        if (ev && ev.pointerId !== pointerId) return;
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", onUp, true);
+        document.removeEventListener("pointercancel", onUp, true);
         try {
           tabEl.releasePointerCapture(pointerId);
         } catch (err) {}
-        if (start.started) finishDrag();
+        try {
+          els.catcher.releasePointerCapture(pointerId);
+        } catch (err) {}
+        if (start.started) {
+          updateTabDrag(ev.clientX, ev.clientY);
+          finishDrag();
+        }
       }
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", onUp, true);
+      document.addEventListener("pointercancel", onUp, true);
       try {
         tabEl.setPointerCapture(pointerId);
       } catch (err) {}
-      tabEl.addEventListener("pointermove", onMove);
-      tabEl.addEventListener("pointerup", onUp);
-      tabEl.addEventListener("pointercancel", onUp);
     });
 
     groupEls.set(gid, group);
@@ -300,21 +765,52 @@
       el.appendChild(close);
       frag.appendChild(el);
     });
+    const scroll = tabsEl.scrollLeft;
     tabsEl.replaceChildren(frag);
+    tabsEl.scrollLeft = scroll;
   }
 
   function renderGroupBody(gid) {
     const rec = state.groups[gid];
     const group = ensureGroupEl(gid);
     const body = group.querySelector(".wm-body");
-    const tab = rec.activeId ? getTab(rec.activeId) : tabsIn(gid)[0];
-    if (!tab) {
-      body.replaceChildren();
-      return;
-    }
+    const list = tabsIn(gid);
+    const tab = rec.activeId ? getTab(rec.activeId) : list[0];
+    if (!tab) return;
     rec.activeId = tab.id;
-    const iframe = getOrCreateFrame(tab);
-    if (iframe.parentNode !== body) body.replaceChildren(iframe);
+    list.forEach(function (t) {
+      const iframe = getOrCreateFrame(t);
+      if (iframe.parentNode !== body) body.appendChild(iframe);
+      const on = t.id === tab.id;
+      iframe.classList.toggle("is-active", on);
+      iframe.classList.toggle("is-hidden", !on);
+    });
+  }
+
+  function syncChildren(parent, nodes) {
+    var i;
+    for (i = 0; i < nodes.length; i++) {
+      if (parent.children[i] !== nodes[i]) {
+        parent.insertBefore(nodes[i], parent.children[i] || null);
+      }
+    }
+    while (parent.children.length > nodes.length) {
+      parent.removeChild(parent.lastChild);
+    }
+  }
+
+  function applyRect(el, g) {
+    const tiled = g.kind !== "popup";
+    const gap = tiled ? 8 : 0;
+    const leftGap = tiled && g.x > 0.5 ? gap / 2 : 0;
+    const topGap = tiled && g.y > 0.5 ? gap / 2 : 0;
+    const rightGap = tiled && g.x + g.w < 99.5 ? gap / 2 : 0;
+    const bottomGap = tiled && g.y + g.h < 99.5 ? gap / 2 : 0;
+    el.style.left = leftGap ? "calc(" + g.x + "% + " + leftGap + "px)" : g.x + "%";
+    el.style.top = topGap ? "calc(" + g.y + "% + " + topGap + "px)" : g.y + "%";
+    el.style.width = leftGap + rightGap ? "calc(" + g.w + "% - " + (leftGap + rightGap) + "px)" : g.w + "%";
+    el.style.height = topGap + bottomGap ? "calc(" + g.h + "% - " + (topGap + bottomGap) + "px)" : g.h + "%";
+    el.style.zIndex = String(g.kind === "popup" ? g.z : 1);
   }
 
   function styleGroup(gid) {
@@ -323,70 +819,37 @@
     group.classList.toggle("is-focused", gid === state.focusedGroupId);
     group.classList.toggle("wm-popup", rec.kind === "popup");
     group.classList.toggle("is-top", rec.kind === "popup" && rec.z === state.zTop);
-    const resize = group.querySelector(".wm-resize");
-    if (rec.kind === "popup") {
-      group.style.left = rec.x + "px";
-      group.style.top = rec.y + "px";
-      group.style.width = rec.width + "px";
-      group.style.height = rec.height + "px";
-      group.style.zIndex = String(rec.z);
-      if (resize) resize.hidden = false;
-    } else {
-      group.style.left = "";
-      group.style.top = "";
-      group.style.width = "";
-      group.style.height = "";
-      group.style.zIndex = "";
-      if (resize) resize.hidden = true;
-    }
+    applyRect(group, rec);
+    const badge = group.querySelector(".wm-pct-badge");
+    if (badge) badge.textContent = fmtRect(rec);
   }
 
   function render() {
-    const docks = dockGroups();
-    els.dock.classList.toggle("is-horizontal", docks.length === 2 && state.dockOrientation === "horizontal");
-    els.dock.classList.toggle("is-vertical", docks.length === 2 && state.dockOrientation === "vertical");
-    els.dock.classList.toggle("is-empty", docks.length === 0);
-
-    if (!docks.length) {
-      const empty = document.createElement("p");
-      empty.className = "wm-empty";
-      empty.innerHTML = "No docked pane. Floats stay as popups, or press <strong>+</strong> in a popup.";
-      els.dock.replaceChildren(empty);
+    if (dragging) return;
+    fillDockGaps();
+    const ids = Object.keys(state.groups).sort(function (a, b) {
+      const az = state.groups[a].kind === "popup" ? state.groups[a].z : 0;
+      const bz = state.groups[b].kind === "popup" ? state.groups[b].z : 0;
+      return az - bz;
+    });
+    if (!ids.length) {
+      let empty = els.windows.querySelector(":scope > .wm-empty");
+      if (!empty) {
+        empty = document.createElement("p");
+        empty.className = "wm-empty";
+        empty.textContent = "No windows. Press + to open one.";
+      }
+      syncChildren(els.windows, [empty]);
     } else {
-      const nodes = docks.map(function (gid) {
-        const group = ensureGroupEl(gid);
-        group.classList.toggle("is-solo", docks.length === 1);
+      const nodes = ids.map(function (gid) {
         styleGroup(gid);
         renderGroupTabs(gid);
         renderGroupBody(gid);
-        return group;
+        return ensureGroupEl(gid);
       });
-      els.dock.replaceChildren.apply(els.dock, nodes);
+      syncChildren(els.windows, nodes);
     }
-
-    const popupIds = Object.keys(state.groups)
-      .filter(function (id) {
-        return state.groups[id].kind === "popup";
-      })
-      .sort(function (a, b) {
-        return state.groups[a].z - state.groups[b].z;
-      });
-    const popupNodes = popupIds.map(function (gid) {
-      const group = ensureGroupEl(gid);
-      styleGroup(gid);
-      renderGroupTabs(gid);
-      renderGroupBody(gid);
-      return group;
-    });
-    els.popups.replaceChildren.apply(els.popups, popupNodes);
-
-    state.tabs.forEach(function (tab) {
-      const iframe = frames.get(tab.id);
-      const g = state.groups[tab.groupId];
-      if (iframe && g && g.activeId !== tab.id && iframe.parentNode !== els.pool) {
-        els.pool.appendChild(iframe);
-      }
-    });
+    updateHud();
     save();
   }
 
@@ -398,12 +861,12 @@
     }
     Object.keys(state.groups).forEach(function (id) {
       const el = groupEls.get(id);
-      if (el) {
-        el.classList.toggle("is-focused", id === gid);
-        el.classList.toggle("is-top", state.groups[id].kind === "popup" && id === gid);
-        if (state.groups[id].kind === "popup") el.style.zIndex = String(state.groups[id].z);
-      }
+      if (!el) return;
+      el.classList.toggle("is-focused", id === gid);
+      el.classList.toggle("is-top", state.groups[id].kind === "popup" && id === gid);
+      if (state.groups[id].kind === "popup") el.style.zIndex = String(state.groups[id].z);
     });
+    updateHud();
     save();
   }
 
@@ -418,9 +881,8 @@
 
   function addTab(gid) {
     if (!state.groups[gid]) {
-      const g = createGroup("dock");
+      const g = createGroup("dock", { x: 0, y: 0, w: 100, h: 100 });
       gid = g.id;
-      state.dockIds = [gid];
     }
     const tab = {
       id: tabUid(),
@@ -435,11 +897,10 @@
 
   function addGraphTab(graphId, title) {
     let gid = state.focusedGroupId;
-    if (!gid || !state.groups[gid]) gid = state.dockIds[0];
+    if (!gid || !state.groups[gid]) gid = Object.keys(state.groups)[0];
     if (!gid || !state.groups[gid]) {
-      const g = createGroup("dock");
+      const g = createGroup("dock", { x: 0, y: 0, w: 100, h: 100 });
       gid = g.id;
-      state.dockIds = [gid];
     }
     const tab = {
       id: tabUid(),
@@ -467,8 +928,7 @@
     if (!remaining.length) {
       removeGroup(gid);
       if (!state.tabs.length) {
-        const g = createGroup("dock");
-        state.dockIds = [g.id];
+        const g = createGroup("dock", { x: 0, y: 0, w: 100, h: 100 });
         addTab(g.id);
         return;
       }
@@ -511,237 +971,392 @@
     render();
   }
 
-  function canSplitFrom(tabId) {
-    const tab = getTab(tabId);
-    if (!tab || !state.groups[tab.groupId]) return false;
-    if (tabsIn(tab.groupId).length > 1) return true;
-    if (state.groups[tab.groupId].kind === "popup" && dockGroups().length >= 1) return true;
-    return dockGroups().length > 1;
-  }
-
-  function splitTab(tabId, zone, hoverGroupId) {
+  function applySnap(tabId, zoneName, pointer) {
     const tab = getTab(tabId);
     if (!tab) return;
-    if (zone === "center") {
-      toPopup(tabId);
-      return;
-    }
-    if (zone === "pane" && hoverGroupId) {
-      moveTabToGroup(tabId, hoverGroupId);
-      return;
-    }
-    const docks = dockGroups();
-    if (docks.length >= 2) {
-      const target = hoverGroupId && state.groups[hoverGroupId] && state.groups[hoverGroupId].kind === "dock"
-        ? hoverGroupId
-        : (zone === "left" || zone === "top" ? docks[0] : docks[1]);
-      moveTabToGroup(tabId, target);
-      if (zone === "left" || zone === "right") state.dockOrientation = "horizontal";
-      if (zone === "top" || zone === "bottom") state.dockOrientation = "vertical";
+    const src = tab.groupId;
+    if (zoneName === "float") {
+      const p = pointer || { x: 50, y: 40 };
+      const rect = floatRectAt(p.x, p.y);
+      if (state.groups[src] && tabsIn(src).length === 1) {
+        Object.assign(state.groups[src], rect, { kind: "popup", z: ++state.zTop });
+        state.focusedGroupId = src;
+        render();
+        return;
+      }
+      const g = createGroup("popup", rect);
+      tab.groupId = g.id;
+      g.activeId = tab.id;
+      const left = tabsIn(src);
+      if (!left.length) removeGroup(src);
+      else if (state.groups[src].activeId === tabId) state.groups[src].activeId = left[0].id;
+      state.focusedGroupId = g.id;
       render();
       return;
     }
-    if (!canSplitFrom(tabId)) return;
-    const src = tab.groupId;
-    const g = createGroup("dock");
-    tab.groupId = g.id;
-    g.activeId = tab.id;
-    const left = tabsIn(src);
-    if (!left.length) removeGroup(src);
-    else if (state.groups[src] && state.groups[src].activeId === tabId) {
-      state.groups[src].activeId = left[0].id;
-    }
-    const other = state.groups[src] ? src : docks.filter(function (id) { return id !== g.id; })[0];
-    if (zone === "left" || zone === "top") state.dockIds = [g.id, other].filter(Boolean);
-    else state.dockIds = [other, g.id].filter(Boolean);
-    state.dockOrientation = zone === "left" || zone === "right" ? "horizontal" : "vertical";
-    state.focusedGroupId = g.id;
-    render();
-  }
-
-  function toPopup(tabId) {
-    const tab = getTab(tabId);
-    if (!tab) return;
-    const src = tab.groupId;
-    if (state.groups[src] && state.groups[src].kind === "popup" && tabsIn(src).length === 1) {
-      focusGroup(src);
+    const rect = SNAP[zoneName];
+    if (!rect) return;
+    const existing = groupByRect(rect);
+    if (existing && existing !== src) {
+      moveTabToGroup(tabId, existing);
       return;
     }
-    const g = createGroup("popup");
-    const stage = els.stage.getBoundingClientRect();
-    const count = Object.keys(state.groups).filter(function (id) {
-      return state.groups[id].kind === "popup";
-    }).length;
-    g.width = Math.min(DEFAULT_POPUP.width, Math.max(MIN_POPUP.width, Math.floor(stage.width * 0.45)));
-    g.height = Math.min(DEFAULT_POPUP.height, Math.max(MIN_POPUP.height, Math.floor(stage.height * 0.55)));
-    g.x = Math.max(16, Math.floor((stage.width - g.width) / 2) + (count - 1) * 28);
-    g.y = Math.max(16, Math.floor((stage.height - g.height) / 2) + (count - 1) * 28);
+    if (state.groups[src] && tabsIn(src).length === 1) {
+      Object.assign(state.groups[src], { x: rect.x, y: rect.y, w: rect.w, h: rect.h, kind: "dock", z: 1 });
+      state.focusedGroupId = src;
+      render();
+      return;
+    }
+    const g = createGroup("dock", rect);
     tab.groupId = g.id;
     g.activeId = tab.id;
     const left = tabsIn(src);
     if (!left.length) removeGroup(src);
-    else if (state.groups[src].activeId === tabId) state.groups[src].activeId = left[0].id;
+    else {
+      if (state.groups[src].activeId === tabId) state.groups[src].activeId = left[0].id;
+      if (state.groups[src].w === 100 && state.groups[src].h === 100 && COMPLEMENT[zoneName]) {
+        Object.assign(state.groups[src], COMPLEMENT[zoneName]);
+      }
+    }
     state.focusedGroupId = g.id;
     render();
   }
 
-  function groupAtPoint(x, y) {
-    const nodes = document.querySelectorAll(".wm-group");
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const rect = nodes[i].getBoundingClientRect();
-      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return nodes[i];
+  function zoneFromPct(px, py) {
+    const x = clamp(px, 0, 99.999);
+    const y = clamp(py, 0, 99.999);
+    const inner = 100 - CUT;
+    if (x >= CUT && x <= inner && y >= CUT && y <= inner) return "float";
+    if (y <= Math.min(x, 100 - x)) return "top";
+    if (y >= Math.max(x, 100 - x)) return "bottom";
+    if (x <= Math.min(y, 100 - y)) return "left";
+    if (x >= Math.max(y, 100 - y)) return "right";
+    return "float";
+  }
+
+  function queueTabDrag(x, y) {
+    if (!dragging) return;
+    dragging.pendingX = x;
+    dragging.pendingY = y;
+    if (dragging.raf) return;
+    dragging.raf = requestAnimationFrame(function () {
+      dragging.raf = 0;
+      if (!dragging) return;
+      updateTabDrag(dragging.pendingX, dragging.pendingY);
+    });
+  }
+
+  function makePlaceholder(width) {
+    const ph = document.createElement("div");
+    ph.className = "wm-tab-ph";
+    ph.style.width = width + "px";
+    return ph;
+  }
+
+  function flipChildren(container, mutate) {
+    const nodes = Array.prototype.slice.call(container.children);
+    const first = new Map();
+    nodes.forEach(function (el) {
+      first.set(el, el.getBoundingClientRect());
+    });
+    mutate();
+    nodes.forEach(function (el) {
+      if (!el.isConnected || (dragging && el === dragging.tabEl)) return;
+      const a = first.get(el);
+      if (!a) return;
+      const b = el.getBoundingClientRect();
+      const dx = a.left - b.left;
+      if (Math.abs(dx) < 1) return;
+      el.style.transition = "none";
+      el.style.transform = "translateX(" + dx + "px)";
+      el.getBoundingClientRect();
+      el.style.transition = "transform 160ms ease";
+      el.style.transform = "";
+    });
+  }
+
+  function movePlaceholder(tabsEl, clientX) {
+    const ph = dragging.placeholder;
+    if (!ph || !tabsEl) return;
+    if (ph.parentNode && ph.parentNode !== tabsEl) {
+      const prev = ph.parentNode;
+      flipChildren(prev, function () {
+        ph.remove();
+      });
+    }
+    if (ph.parentNode !== tabsEl) {
+      ph.style.width = dragging.tabWidth + "px";
+      tabsEl.appendChild(ph);
+    } else {
+      ph.style.width = dragging.tabWidth + "px";
+    }
+    const kids = Array.prototype.filter.call(tabsEl.children, function (el) {
+      return el !== ph && el.classList.contains("wm-tab");
+    });
+    let before = null;
+    for (let i = 0; i < kids.length; i++) {
+      const r = kids[i].getBoundingClientRect();
+      if (clientX < r.left + r.width / 2) {
+        before = kids[i];
+        break;
+      }
+    }
+    if (ph.nextSibling === before) return;
+    flipChildren(tabsEl, function () {
+      tabsEl.insertBefore(ph, before);
+    });
+  }
+
+  function stripHit(node, strip) {
+    const r = strip.getBoundingClientRect();
+    return {
+      gid: node.dataset.groupId,
+      tabsEl: node.querySelector(".wm-tabs"),
+      stripEl: strip,
+      stripTop: r.top,
+    };
+  }
+
+  function pointInRect(x, y, r, padX, padY) {
+    return x >= r.left - padX && x <= r.right + padX && y >= r.top - padY && y <= r.bottom + padY;
+  }
+
+  function stripAtPoint(x, y) {
+    const groups = Array.prototype.map.call(document.querySelectorAll(".wm-group"), function (node, order) {
+      return { node: node, order: order, z: parseInt(node.style.zIndex, 10) || 1 };
+    });
+    groups.sort(function (a, b) {
+      if (b.z !== a.z) return b.z - a.z;
+      return b.order - a.order;
+    });
+    const sticky = dragging && dragging.mode === "strip" && dragging.hoverGroupId;
+    const padY = sticky ? 18 : 10;
+    for (let i = 0; i < groups.length; i++) {
+      const node = groups[i].node;
+      const strip = node.querySelector(".wm-tabstrip");
+      if (!strip) continue;
+      const stripBox = strip.getBoundingClientRect();
+      if (pointInRect(x, y, stripBox, 6, padY)) return stripHit(node, strip);
+      if (pointInRect(x, y, node.getBoundingClientRect(), 0, 0)) return null;
     }
     return null;
   }
 
-  function zoneInRect(x, y, rect) {
-    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null;
-    const px = (x - rect.left) / rect.width;
-    const py = (y - rect.top) / rect.height;
-    const left = px < ZONE_EDGE;
-    const right = px > 1 - ZONE_EDGE;
-    const top = py < ZONE_EDGE;
-    const bottom = py > 1 - ZONE_EDGE;
-    if (left && !top && !bottom) return "left";
-    if (right && !top && !bottom) return "right";
-    if (top && !left && !right) return "top";
-    if (bottom && !left && !right) return "bottom";
-    if ((left || right) && (top || bottom)) {
-      if (Math.min(px, 1 - px) < Math.min(py, 1 - py)) return px < 0.5 ? "left" : "right";
-      return py < 0.5 ? "top" : "bottom";
-    }
-    return "center";
-  }
-
-  function positionPreview(rect) {
-    const stage = els.stage.getBoundingClientRect();
-    els.preview.style.left = rect.left - stage.left + "px";
-    els.preview.style.top = rect.top - stage.top + "px";
-    els.preview.style.width = rect.width + "px";
-    els.preview.style.height = rect.height + "px";
-  }
-
-  function showPreview(mode, zone) {
-    els.preview.classList.toggle("is-visible", !!mode);
-    els.preview.classList.toggle("is-split", mode === "split");
-    els.preview.classList.toggle("is-move", mode === "move");
-    els.preview.querySelectorAll(".wm-preview-zone").forEach(function (el) {
-      el.classList.toggle("is-active", !!zone && el.getAttribute("data-zone") === zone);
+  function highlightStrip(gid) {
+    document.querySelectorAll(".wm-tabstrip").forEach(function (el) {
+      const on = !!(gid && el.parentNode && el.parentNode.dataset.groupId === gid);
+      el.classList.toggle("drop-into", on);
     });
   }
 
-  function beginTabDrag(tabEl, x, y) {
+  function positionGhost(x, y, lockTop) {
+    els.ghost.style.left = x - dragging.grabX + "px";
+    els.ghost.style.top = (lockTop != null ? lockTop : y - dragging.grabY) + "px";
+  }
+
+  function slideSoloTab(x) {
+    const tabEl = dragging.tabEl;
+    const tabsEl = dragging.tabsEl;
+    const parent = tabsEl.getBoundingClientRect();
+    const raw = x - dragging.grabX - dragging.originLeft;
+    const minT = parent.left - dragging.originLeft;
+    const maxT = Math.max(minT, parent.right - dragging.tabWidth - dragging.originLeft);
+    let t = raw;
+    if (t < minT) t = minT + (t - minT) * 0.3;
+    else if (t > maxT) t = maxT + (t - maxT) * 0.3;
+    tabEl.style.transform = "translateX(" + t + "px)";
+  }
+
+  function bounceTabHome(tabEl) {
+    if (!tabEl) return;
+    tabEl.style.transition = "transform 0.18s ease";
+    tabEl.style.transform = "translateX(0)";
+    window.setTimeout(function () {
+      tabEl.style.transition = "";
+      tabEl.style.transform = "";
+    }, 200);
+  }
+
+  function orderedIdsFromStrip(tabsEl, dragId) {
+    const ids = [];
+    Array.prototype.forEach.call(tabsEl.children, function (node) {
+      if (node.classList.contains("wm-tab-ph")) ids.push(dragId);
+      else if (node.classList.contains("wm-tab") && node.dataset.windowId !== dragId) {
+        ids.push(node.dataset.windowId);
+      }
+    });
+    if (ids.indexOf(dragId) < 0) ids.push(dragId);
+    return ids;
+  }
+
+  function setGroupTabOrder(gid, orderedIds) {
+    const tab = getTab(dragging.id);
+    const picked = [];
+    orderedIds.forEach(function (id) {
+      const t = getTab(id);
+      if (!t) return;
+      t.groupId = gid;
+      picked.push(t);
+    });
+    const result = [];
+    let inserted = false;
+    state.tabs.forEach(function (t) {
+      if (t.id === dragging.id || t.groupId === gid) {
+        if (!inserted) {
+          picked.forEach(function (p) {
+            result.push(p);
+          });
+          inserted = true;
+        }
+        return;
+      }
+      result.push(t);
+    });
+    if (!inserted) {
+      picked.forEach(function (p) {
+        result.push(p);
+      });
+    }
+    state.tabs = result;
+    if (tab && state.groups[gid]) state.groups[gid].activeId = tab.id;
+    const src = dragging.groupId;
+    if (src && src !== gid && state.groups[src] && !tabsIn(src).length) removeGroup(src);
+  }
+
+  function beginTabDrag(tabEl, x, y, start) {
+    const tab = getTab(tabEl.dataset.windowId);
+    const gid = tab.groupId;
+    const r = tabEl.getBoundingClientRect();
+    const canExtract = state.tabs.length > 1;
+    const ph = makePlaceholder(r.width);
+    const tabsEl = tabEl.parentNode;
+    const next = tabEl.nextSibling;
     dragging = {
-      id: tabEl.dataset.windowId,
-      groupId: getTab(tabEl.dataset.windowId).groupId,
-      overTabId: null,
-      placeAfter: false,
-      hoverGroupId: null,
+      id: tab.id,
+      groupId: gid,
+      tabEl: tabEl,
+      tabsEl: tabsEl,
+      placeholder: ph,
+      canExtract: canExtract,
+      grabX: start.grabX,
+      grabY: start.grabY,
+      originLeft: start.originLeft,
+      tabWidth: r.width,
+      pointerId: start.pointerId,
+      hoverGroupId: gid,
       zone: null,
-      mode: null,
+      mode: "strip",
+      pointer: pointerPct(x, y),
+      raf: 0,
+      pendingX: x,
+      pendingY: y,
     };
-    tabEl.classList.add("is-dragging");
     document.body.classList.add("is-dragging-tab");
+    if (!canExtract) {
+      tabEl.classList.add("is-sliding");
+      tabsEl.classList.add("is-sliding-tabs");
+      updateTabDrag(x, y);
+      return;
+    }
+    tabEl.classList.add("is-dragging");
+    if (next) tabsEl.insertBefore(ph, next);
+    else tabsEl.appendChild(ph);
     els.ghost.textContent = tabEl.querySelector(".wm-tab-title").textContent;
+    els.ghost.style.width = r.width + "px";
     els.ghost.classList.add("is-visible");
     els.catcher.classList.add("is-visible");
-    els.ghost.style.left = x + 14 + "px";
-    els.ghost.style.top = y + 12 + "px";
+    els.overlay.classList.add("is-dragging");
+    try {
+      els.catcher.setPointerCapture(start.pointerId);
+    } catch (err) {}
+    positionGhost(x, y, r.top);
     updateTabDrag(x, y);
   }
 
   function updateTabDrag(x, y) {
     if (!dragging) return;
-    els.ghost.style.left = x + 14 + "px";
-    els.ghost.style.top = y + 12 + "px";
-    document.querySelectorAll(".wm-tab").forEach(function (t) {
-      t.classList.remove("drop-before", "drop-after");
-    });
-    document.querySelectorAll(".wm-tabstrip").forEach(function (s) {
-      s.classList.remove("drop-into");
-    });
+    const pct = pointerPct(x, y);
+    dragging.pointer = pct;
 
-    const groupEl = groupAtPoint(x, y);
-    dragging.hoverGroupId = groupEl ? groupEl.dataset.groupId : null;
-    dragging.overTabId = null;
-    dragging.zone = null;
-    dragging.mode = null;
-
-    if (groupEl) {
-      const strip = groupEl.querySelector(".wm-tabstrip");
-      const body = groupEl.querySelector(".wm-body");
-      const stripRect = strip.getBoundingClientRect();
-      if (x >= stripRect.left && x <= stripRect.right && y >= stripRect.top && y <= stripRect.bottom) {
-        const tabs = strip.querySelectorAll(".wm-tab");
-        let hit = null;
-        for (let i = 0; i < tabs.length; i++) {
-          if (tabs[i].dataset.windowId === dragging.id) continue;
-          const r = tabs[i].getBoundingClientRect();
-          if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-            hit = tabs[i];
-            dragging.placeAfter = x > r.left + r.width / 2;
-            break;
-          }
-        }
-        dragging.mode = "strip";
-        dragging.hoverGroupId = groupEl.dataset.groupId;
-        if (hit) {
-          dragging.overTabId = hit.dataset.windowId;
-          hit.classList.add(dragging.placeAfter ? "drop-after" : "drop-before");
-        } else {
-          strip.classList.add("drop-into");
-        }
-        showPreview(null);
-        return;
-      }
-      const bodyRect = body.getBoundingClientRect();
-      positionPreview(groupEl.getBoundingClientRect());
-      const docks = dockGroups();
-      const hoverG = state.groups[groupEl.dataset.groupId];
-      if (hoverG && hoverG.kind === "dock" && docks.length === 1) {
-        const fromHere = dragging.groupId === hoverG.id;
-        if (!fromHere || tabsIn(dragging.groupId).length > 1) {
-          dragging.mode = "split";
-          dragging.zone = zoneInRect(x, y, bodyRect);
-          showPreview("split", dragging.zone);
-          return;
-        }
-      }
-      dragging.mode = "move";
-      const z = zoneInRect(x, y, bodyRect);
-      dragging.zone = z === "center" ? "center" : "pane";
-      showPreview("move", dragging.zone);
+    if (!dragging.canExtract) {
+      slideSoloTab(x);
+      setHud("move tab");
       return;
     }
-    showPreview(null);
+
+    const strip = stripAtPoint(x, y);
+    if (strip) {
+      dragging.mode = "strip";
+      dragging.hoverGroupId = strip.gid;
+      dragging.zone = null;
+      positionGhost(x, y, strip.stripTop);
+      movePlaceholder(strip.tabsEl, x);
+      highlightZone(null);
+      highlightStrip(strip.gid);
+      setSnapPreview(null);
+      setHud("drop on tab strip");
+      return;
+    }
+
+    dragging.mode = "snap";
+    dragging.hoverGroupId = null;
+    highlightStrip(null);
+    dragging.zone = zoneFromPct(pct.x, pct.y);
+    positionGhost(x, y);
+    if (dragging.placeholder) dragging.placeholder.style.width = "0px";
+    highlightZone(dragging.zone);
+    if (dragging.zone === "float") {
+      const live = floatRectAt(pct.x, pct.y);
+      setSnapPreview(live, "Float");
+    } else {
+      const snap = SNAP[dragging.zone];
+      setSnapPreview(snap, snap.label);
+    }
   }
 
   function finishDrag() {
     const d = dragging;
-    dragging = null;
-    document.body.classList.remove("is-dragging-tab");
-    els.ghost.classList.remove("is-visible");
-    els.catcher.classList.remove("is-visible");
-    showPreview(null);
-    document.querySelectorAll(".wm-tab").forEach(function (t) {
-      t.classList.remove("is-dragging", "drop-before", "drop-after");
-    });
-    document.querySelectorAll(".wm-tabstrip").forEach(function (s) {
-      s.classList.remove("drop-into");
-    });
     if (!d) return;
-    ignoreNextClick = true;
-    if (d.mode === "strip" && d.hoverGroupId) {
-      moveTabToGroup(d.id, d.hoverGroupId, d.overTabId, d.placeAfter);
+    if (d.raf) {
+      cancelAnimationFrame(d.raf);
+      d.raf = 0;
+    }
+    if (d.pendingX != null) updateTabDrag(d.pendingX, d.pendingY);
+    ignoreClicks(320);
+
+    if (!d.canExtract) {
+      bounceTabHome(d.tabEl);
+      d.tabEl.classList.remove("is-sliding");
+      if (d.tabsEl) d.tabsEl.classList.remove("is-sliding-tabs");
+      document.body.classList.remove("is-dragging-tab");
+      dragging = null;
       return;
     }
-    if (d.mode === "split" && d.zone) {
-      splitTab(d.id, d.zone, d.hoverGroupId);
-      return;
+
+    const stripIds =
+      d.mode === "strip" && d.placeholder && d.placeholder.parentNode
+        ? orderedIdsFromStrip(d.placeholder.parentNode, d.id)
+        : null;
+
+    if (d.mode === "strip" && d.hoverGroupId && state.groups[d.hoverGroupId] && stripIds) {
+      setGroupTabOrder(d.hoverGroupId, stripIds);
+    } else if (d.mode === "snap" && d.zone) {
+      applySnap(d.id, d.zone, d.pointer);
     }
-    if (d.mode === "move" && d.zone) {
-      splitTab(d.id, d.zone, d.hoverGroupId);
-    }
+
+    if (d.placeholder && d.placeholder.parentNode) d.placeholder.remove();
+    d.tabEl.classList.remove("is-drag-follow", "is-sliding", "is-dragging");
+    d.tabEl.style.transform = "";
+    els.ghost.classList.remove("is-visible");
+    els.ghost.style.width = "";
+    document.body.classList.remove("is-dragging-tab");
+    els.catcher.classList.remove("is-visible");
+    els.overlay.classList.remove("is-dragging");
+    setSnapPreview(null);
+    highlightZone(null);
+    highlightStrip(null);
+    dragging = null;
+    render();
   }
 
   function startPopupMove(e, gid) {
@@ -749,20 +1364,25 @@
     if (!g || g.kind !== "popup") return;
     e.preventDefault();
     focusGroup(gid);
-    const start = { x: e.clientX, y: e.clientY, left: g.x, top: g.y };
+    const start = { x: e.clientX, y: e.clientY };
+    const origin = { x: g.x, y: g.y };
+    const stage = stageSize();
     const target = e.currentTarget;
     function onMove(ev) {
-      g.x = Math.max(0, start.left + (ev.clientX - start.x));
-      g.y = Math.max(0, start.top + (ev.clientY - start.y));
+      g.x = roundPct(origin.x + ((ev.clientX - start.x) / stage.w) * 100);
+      g.y = roundPct(origin.y + ((ev.clientY - start.y) / stage.h) * 100);
       const el = groupEls.get(gid);
       if (el) {
-        el.style.left = g.x + "px";
-        el.style.top = g.y + "px";
+        applyRect(el, g);
+        const badge = el.querySelector(".wm-pct-badge");
+        if (badge) badge.textContent = fmtRect(g);
       }
+      setHud("move  " + fmtRect(g));
     }
     function onUp() {
       target.removeEventListener("pointermove", onMove);
       target.removeEventListener("pointerup", onUp);
+      updateHud();
       save();
     }
     try {
@@ -777,20 +1397,31 @@
     if (!g || g.kind !== "popup") return;
     e.preventDefault();
     focusGroup(gid);
-    const start = { x: e.clientX, y: e.clientY, w: g.width, h: g.height };
+    const start = { x: e.clientX, y: e.clientY };
+    const origin = { w: g.w, h: g.h };
+    const stage = stageSize();
     const target = e.currentTarget;
     function onMove(ev) {
-      g.width = Math.max(MIN_POPUP.width, start.w + (ev.clientX - start.x));
-      g.height = Math.max(MIN_POPUP.height, start.h + (ev.clientY - start.y));
+      const next = sizeRect({
+        x: g.x,
+        y: g.y,
+        w: origin.w + ((ev.clientX - start.x) / stage.w) * 100,
+        h: origin.h + ((ev.clientY - start.y) / stage.h) * 100,
+      });
+      g.w = next.w;
+      g.h = next.h;
       const el = groupEls.get(gid);
       if (el) {
-        el.style.width = g.width + "px";
-        el.style.height = g.height + "px";
+        applyRect(el, g);
+        const badge = el.querySelector(".wm-pct-badge");
+        if (badge) badge.textContent = fmtRect(g);
       }
+      setHud("resize  " + fmtRect(g));
     }
     function onUp() {
       target.removeEventListener("pointermove", onMove);
       target.removeEventListener("pointerup", onUp);
+      updateHud();
       save();
     }
     try {
@@ -800,30 +1431,159 @@
     target.addEventListener("pointerup", onUp);
   }
 
+  function svgEl(name, attrs) {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+    Object.keys(attrs).forEach(function (key) {
+      el.setAttribute(key, attrs[key]);
+    });
+    return el;
+  }
+
+  function buildOverlay() {
+    const svg = els.split;
+    const labels = els.labels;
+    svg.replaceChildren();
+    labels.replaceChildren();
+    const inner = 100 - CUT;
+    const polys = [
+      { zone: "top", points: "0,0 100,0 " + inner + "," + CUT + " " + CUT + "," + CUT },
+      { zone: "bottom", points: "0,100 100,100 " + inner + "," + inner + " " + CUT + "," + inner },
+      { zone: "left", points: "0,0 0,100 " + CUT + "," + inner + " " + CUT + "," + CUT },
+      { zone: "right", points: "100,0 100,100 " + inner + "," + inner + " " + inner + "," + CUT },
+    ];
+    polys.forEach(function (p) {
+      svg.appendChild(svgEl("polygon", { class: "wm-x-zone", "data-zone": p.zone, points: p.points }));
+    });
+    svg.appendChild(
+      svgEl("rect", {
+        class: "wm-x-zone is-float",
+        "data-zone": "float",
+        x: String(CUT),
+        y: String(CUT),
+        width: String(inner - CUT),
+        height: String(inner - CUT),
+      })
+    );
+    svg.appendChild(svgEl("line", { class: "wm-x-diag", x1: "0", y1: "0", x2: "100", y2: "100" }));
+    svg.appendChild(svgEl("line", { class: "wm-x-diag", x1: "100", y1: "0", x2: "0", y2: "100" }));
+    svg.appendChild(
+      svgEl("rect", {
+        class: "wm-x-inner",
+        x: String(CUT),
+        y: String(CUT),
+        width: String(inner - CUT),
+        height: String(inner - CUT),
+      })
+    );
+
+    [
+      { zone: "top", text: "Top 50%", x: 50, y: CUT / 2 },
+      { zone: "bottom", text: "Bottom 50%", x: 50, y: 100 - CUT / 2 },
+      { zone: "left", text: "Left 50%", x: CUT / 2, y: 50 },
+      { zone: "right", text: "Right 50%", x: 100 - CUT / 2, y: 50 },
+      { zone: "float", text: "Float", x: 50, y: 50 },
+    ].forEach(function (l) {
+      const el = document.createElement("div");
+      el.className = "wm-x-label" + (l.zone === "float" ? " is-float" : "");
+      el.dataset.zone = l.zone;
+      el.textContent = l.text;
+      el.style.left = l.x + "%";
+      el.style.top = l.y + "%";
+      labels.appendChild(el);
+    });
+  }
+
+  function highlightZone(name) {
+    els.split.querySelectorAll(".wm-x-zone").forEach(function (el) {
+      el.classList.toggle("is-active", !!name && el.getAttribute("data-zone") === name);
+    });
+    els.labels.querySelectorAll(".wm-x-label").forEach(function (el) {
+      el.classList.toggle("is-active", !!name && el.dataset.zone === name);
+    });
+  }
+
+  function setSnapPreview(rect, text) {
+    if (!rect) {
+      els.snap.classList.remove("is-visible", "is-instant");
+      snapKind = null;
+      if (text) setHud(text);
+      else updateHud();
+      return;
+    }
+    const isFloat = !!(text && text.indexOf("Float") === 0);
+    const kind = isFloat ? "float" : text || "dock";
+    const appearing = !els.snap.classList.contains("is-visible");
+    const followFloat = isFloat && snapKind === "float" && !appearing;
+    els.snap.classList.toggle("is-instant", appearing || followFloat);
+    const s = stageSize();
+    els.snap.style.left = s.left + (rect.x / 100) * s.w + "px";
+    els.snap.style.top = s.top + (rect.y / 100) * s.h + "px";
+    els.snap.style.width = (rect.w / 100) * s.w + "px";
+    els.snap.style.height = (rect.h / 100) * s.h + "px";
+    els.snap.classList.add("is-visible");
+    els.snap.classList.toggle("is-float", isFloat);
+    els.snap.textContent = "";
+    snapKind = kind;
+    setHud(text ? text + "  ·  " + fmtRect(rect) : fmtRect(rect));
+  }
+
+  function setHud(text) {
+    if (els.hudText) els.hudText.textContent = text;
+  }
+
+  function updateHud() {
+    const g = state.focusedGroupId && state.groups[state.focusedGroupId];
+    if (!g) {
+      setHud("X-split · drag a tab to snap");
+      return;
+    }
+    setHud((g.kind === "popup" ? "popup  " : "tiled  ") + fmtRect(g));
+  }
+
+  function setOverlay(on) {
+    overlayOn = on;
+    els.overlay.classList.toggle("is-on", on);
+    els.toggle.classList.toggle("is-on", on);
+  }
+
   function boot() {
     els.stage = document.getElementById("wm-stage");
-    els.dock = document.getElementById("wm-dock");
-    els.popups = document.getElementById("wm-popups");
-    els.preview = document.getElementById("wm-dock-preview");
+    els.windows = document.getElementById("wm-windows");
+    els.overlay = document.getElementById("wm-pct-overlay");
+    els.split = document.getElementById("wm-x-split");
+    els.labels = document.getElementById("wm-x-labels");
+    els.snap = document.getElementById("wm-pct-snap");
     els.catcher = document.getElementById("wm-drop-catcher");
-    els.pool = document.getElementById("wm-pool");
     els.ghost = document.getElementById("wm-drag-ghost");
+    els.hudText = document.getElementById("wm-pct-hud-text");
+    els.toggle = document.getElementById("wm-pct-toggle");
+
+    buildOverlay();
+    setOverlay(true);
+    els.toggle.addEventListener("click", function () {
+      setOverlay(!overlayOn);
+    });
 
     window.addEventListener("message", function (e) {
       if (!e.data || e.data.type !== "cas-open-graph" || !e.data.id) return;
       addGraphTab(e.data.id, e.data.title || "Graph");
     });
 
+    window.addEventListener("resize", function () {
+      Object.keys(state.groups).forEach(function (id) {
+        const el = groupEls.get(id);
+        if (el) applyRect(el, state.groups[id]);
+      });
+    });
+
     if (!load()) {
-      const g = createGroup("dock");
-      state.dockIds = [g.id];
+      const g = createGroup("dock", { x: 0, y: 0, w: 100, h: 100 });
       state.tabs = [{ id: tabUid(), title: "Window 1", groupId: g.id }];
       g.activeId = state.tabs[0].id;
       state.focusedGroupId = g.id;
     }
-    if (!dockGroups().length && !Object.keys(state.groups).length) {
-      const g = createGroup("dock");
-      state.dockIds = [g.id];
+    if (!Object.keys(state.groups).length) {
+      const g = createGroup("dock", { x: 0, y: 0, w: 100, h: 100 });
       addTab(g.id);
       return;
     }
