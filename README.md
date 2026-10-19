@@ -1,6 +1,6 @@
 # Website links:
 
-### This version (visual improvements) [HERE](https://windshifter1.github.io/Computer-Algebra-System/Algebra.html)
+### This version (visual improvements) [HERE](https://windshifter1.github.io/Computer-Algebra-System/)
 
 ### Original author's version (most up to date) [HERE](https://mathsfromnothing.au/wp-content/uploads/algebraprogramnew/index.html)
 
@@ -24,7 +24,7 @@ Please refer to the original project for the latest updates and bugfixes.
 
 This version contains visual and user-experience improvements.
 This may occasionally be behind the original in terms of updates and bugfixes.
-It can be accessed [HERE](https://windshifter1.github.io/Computer-Algebra-System/Algebra.html)
+It can be accessed [HERE](https://windshifter1.github.io/Computer-Algebra-System/)
 
 ## Credits
 

@@ -7,6 +7,18 @@
         
         <link rel="shortcut icon" href="https://mathsfromnothing.au/wp-content/uploads/algebraprogramnew/index.html#">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <script>
+        /* Top-level Algebra.html skips the window docking shell in index.html.
+           Redirect so PC/bookmark/README links get tabs + docking; stay put when
+           loaded as an iframe pane inside that shell. */
+        (function () {
+          try {
+            if (window.top === window) {
+              location.replace("./" + (location.search || "") + (location.hash || ""));
+            }
+          } catch (e) {}
+        })();
+        </script>
         <link rel="stylesheet" href="./Algebra_files/clickmenustyle.css">
         <link rel="stylesheet" href="./styles.css">
         <script id="MathJax-script" src="./Algebra_files/tex-chtml.js.download"></script><style type="text/css">.CtxtMenu_InfoClose {  top:.2em; right:.2em;}
