@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Requires a one-time repo setting: Settings → Pages → Source → GitHub Actions.
+# GITHUB_TOKEN cannot create the Pages site; configure-pages only works after that.
+
 permissions:
   contents: read
   pages: write
@@ -12,7 +15,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -22,13 +25,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
+      - name: Prepare site artifact
+        run: |
+          mkdir -p _site
+          # Publish only the static site — exclude git metadata and workflows.
+          tar -C . \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./_site' \
+            -cf - . | tar -C _site -xf -
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
+
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
